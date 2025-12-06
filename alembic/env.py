@@ -5,12 +5,14 @@ from alembic import context
 from app.database import Base
 from app.config import settings
 
+
 # Importar todos os models
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.models.lead import Lead
 from app.models.followup import Followup
 from app.models.metric import Metric
+from app.rag.vectorstore import Document
 
 # this is the Alembic Config object
 config = context.config

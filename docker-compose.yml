@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16
+    image: ankane/pgvector:latest
     container_name: whatsapp_agent_db
     environment:
       POSTGRES_USER: whatsapp_agent

@@ -7,3 +7,7 @@ loguru
 sqlalchemy
 psycopg2-binary
 alembic
+pypdf2
+python-docx
+pgvector
+openai
