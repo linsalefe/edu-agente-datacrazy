@@ -69,4 +69,4 @@ celerybeat.pid
 
 # Backups
 *.backup
-backups/.env
+backups/

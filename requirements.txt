@@ -11,3 +11,5 @@ pypdf2
 python-docx
 pgvector
 openai
+requests
+redis

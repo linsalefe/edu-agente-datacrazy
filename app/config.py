@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Z-API
     ZAPI_TOKEN: str
     ZAPI_INSTANCE: str
+    ZAPI_CLIENT_TOKEN: str
     ZAPI_BASE_URL: str = "https://api.z-api.io/instances"
     
     # DataCrazy
