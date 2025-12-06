@@ -4,4 +4,6 @@ pydantic
 pydantic-settings
 python-dotenv
 loguru
-PyJWT
+sqlalchemy
+psycopg2-binary
+alembic
