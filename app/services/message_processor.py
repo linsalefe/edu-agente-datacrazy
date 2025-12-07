@@ -3,6 +3,7 @@ from app.utils.anti_loop import AntiLoopManager
 from app.services.conversation import ConversationManager
 from app.llm.response_generator import ResponseGenerator
 from app.channels.whatsapp.zapi import ZAPIClient
+from app.crm.sync_service import CRMSyncService
 from app.models.lead import Lead
 from loguru import logger
 from typing import Optional
@@ -17,6 +18,7 @@ class MessageProcessor:
         self.conv_manager = ConversationManager()
         self.response_gen = ResponseGenerator()
         self.whatsapp = ZAPIClient()
+        self.crm_sync = CRMSyncService()
     
     def process_message(self, phone: str, text: str, name: Optional[str] = None) -> bool:
         """
@@ -105,10 +107,32 @@ class MessageProcessor:
                 content=response
             )
             
-            # 11. Tratar handoff se necessário
+            # 11. Sincronizar com DataCrazy (async, não trava)
+            try:
+                # Se é primeira mensagem, criar lead no CRM
+                if len(history) <= 2:  # Apenas user + assistant
+                    logger.info(f"📤 Sincronizando novo lead com DataCrazy...")
+                    self.crm_sync.sync_lead_create(conversation.lead_id)
+                
+                # Adicionar nota com a conversa
+                note = f"WhatsApp - {name or 'Cliente'}: {text}\nBot: {response}"
+                self.crm_sync.add_note_to_lead(conversation.lead_id, note)
+                
+            except Exception as crm_error:
+                # Não deixar erro do CRM quebrar o fluxo
+                logger.error(f"⚠️  Erro ao sincronizar CRM (não crítico): {crm_error}")
+            
+            # 12. Tratar handoff se necessário
             if precisa_handoff:
                 logger.warning(f"⚠️  Handoff necessário para conversa {conversation.id}")
-                # TODO: Implementar lógica de handoff
+                # Adicionar nota de handoff
+                try:
+                    self.crm_sync.add_note_to_lead(
+                        conversation.lead_id,
+                        "🚨 HANDOFF SOLICITADO - Cliente precisa de atendimento humano"
+                    )
+                except:
+                    pass
             
             logger.info(f"✅ Mensagem processada com sucesso: {phone}")
             
