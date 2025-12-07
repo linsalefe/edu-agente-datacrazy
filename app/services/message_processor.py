@@ -1,146 +1,214 @@
-from app.utils.dedup import DedupManager
-from app.utils.anti_loop import AntiLoopManager
-from app.services.conversation import ConversationManager
-from app.llm.response_generator import ResponseGenerator
+"""
+Processador de Mensagens
+Orquestra todo o fluxo de processamento de mensagens
+"""
+
+from datetime import datetime
+from sqlalchemy.orm import Session
+from loguru import logger
+
+from app.models.conversation import Conversation, ConversationStatus, ConversationStage
+from app.models.message import Message
+from app.models.lead import Lead
+from app.rag.query import build_context
+from app.llm.response_generator import generate_response
 from app.channels.whatsapp.zapi import ZAPIClient
 from app.crm.sync_service import CRMSyncService
-from app.models.lead import Lead
-from loguru import logger
-from typing import Optional
+from app.core.scheduler import FollowupScheduler
+from app.services.handoff import HandoffService
+from app.config import settings
 
 
 class MessageProcessor:
-    """Processa mensagens do WhatsApp end-to-end"""
+    """Processa mensagens do WhatsApp e orquestra respostas da IA"""
     
-    def __init__(self):
-        self.dedup = DedupManager()
-        self.anti_loop = AntiLoopManager()
-        self.conv_manager = ConversationManager()
-        self.response_gen = ResponseGenerator()
-        self.whatsapp = ZAPIClient()
-        self.crm_sync = CRMSyncService()
+    def __init__(self, db: Session):
+        self.db = db
+        self.zapi = ZAPIClient(
+            token=settings.ZAPI_TOKEN,
+            instance=settings.ZAPI_INSTANCE,
+            client_token=settings.ZAPI_CLIENT_TOKEN
+        )
+        self.crm = CRMSyncService(db)
     
-    def process_message(self, phone: str, text: str, name: Optional[str] = None) -> bool:
+    async def process_message(self, phone: str, text: str, name: str = None):
         """
-        Processa mensagem completa: recebe, gera resposta, envia
+        Processa uma mensagem recebida
         
         Args:
-            phone: Número do telefone
+            phone: Telefone do cliente
             text: Texto da mensagem
-            name: Nome do remetente (opcional)
-            
-        Returns:
-            True se processado com sucesso
+            name: Nome do cliente (opcional)
         """
+        logger.info(f"📱 Processando mensagem de {phone}")
         
         try:
-            # 1. Verificar duplicata
-            if self.dedup.is_duplicate(phone, text):
-                logger.info("⏭️  Mensagem duplicada - ignorada")
-                return False
+            # 1. Get/Create Conversation
+            conversation = self._get_or_create_conversation(phone, name)
             
-            # 2. Verificar loop
-            if self.anti_loop.is_loop(phone, text):
-                logger.info("🔄 Loop detectado - ignorada")
-                return False
+            # 2. Verifica se está em handoff
+            if conversation.status == ConversationStatus.HANDOFF:
+                logger.info(f"⚠️  Conversa {conversation.id} está em handoff - ignorando")
+                return
             
-            # 3. Get/Create conversa
-            conversation = self.conv_manager.get_or_create_conversation(phone)
-            
-            # Atualizar nome do lead se fornecido
-            if name:
-                lead = self.conv_manager.get_or_create_lead(phone, name)
-            
-            # 4. Salvar mensagem do usuário
-            self.conv_manager.add_message(
+            # 3. Salva mensagem do usuário
+            user_message = Message(
                 conversation_id=conversation.id,
                 role="user",
                 content=text
             )
+            self.db.add(user_message)
+            self.db.commit()
             
-            # 5. Buscar histórico
-            history = self.conv_manager.get_history(conversation.id, limit=12)
+            # 4. Atualiza timestamp da conversa
+            conversation.last_message_at = datetime.utcnow()
+            self.db.commit()
             
-            # 6. Preparar dados do lead
-            lead_data = None
-            if conversation.lead_id:
-                lead = self.conv_manager.db.query(Lead).filter(
-                    Lead.id == conversation.lead_id
-                ).first()
-                
-                if lead:
-                    lead_data = {
-                        'name': lead.name,
-                        'phone': lead.phone,
-                        'email': lead.email,
-                        'profile': lead.profile or {}
-                    }
+            # 5. Busca contexto RAG
+            context = build_context(text, top_k=4)
+            logger.info(f"📚 Contexto RAG obtido: {len(context)} caracteres")
             
-            # 7. Gerar resposta com IA
-            logger.info(f"🤖 Gerando resposta para: {text[:50]}...")
+            # 6. Busca histórico da conversa
+            history = self._get_conversation_history(conversation.id, limit=10)
             
-            response, precisa_handoff = self.response_gen.generate_response(
+            # 7. Gera resposta da IA
+            response, needs_handoff = generate_response(
                 user_message=text,
-                conversation_history=history,
-                stage=conversation.current_stage.value,
-                lead_data=lead_data
+                history=history,
+                stage=conversation.current_stage,
+                lead_data=conversation.lead.to_dict() if conversation.lead else {},
+                context=context
             )
             
-            if not response:
-                logger.error("❌ Falha ao gerar resposta")
-                response = "Desculpe, estou com dificuldades técnicas. Um atendente vai te responder em breve."
+            logger.info(f"🤖 Resposta gerada: {response[:100]}...")
+            logger.info(f"🤝 Necessita handoff: {needs_handoff}")
             
-            # 8. Enviar resposta via WhatsApp
-            success = self.whatsapp.send_text(phone, response)
+            # 8. Verifica se precisa de handoff
+            if needs_handoff:
+                HandoffService.request_handoff(
+                    conversation_id=conversation.id,
+                    reason="IA solicitou transferência para humano",
+                    db=self.db
+                )
+                return
             
-            if not success:
-                logger.error(f"❌ Falha ao enviar mensagem para {phone}")
-                return False
-            
-            # 9. Registrar para anti-loop
-            self.anti_loop.register_sent_message(phone, response)
-            
-            # 10. Salvar resposta do assistente
-            self.conv_manager.add_message(
+            # 9. Salva resposta da IA
+            assistant_message = Message(
                 conversation_id=conversation.id,
                 role="assistant",
                 content=response
             )
+            self.db.add(assistant_message)
+            self.db.commit()
             
-            # 11. Sincronizar com DataCrazy (async, não trava)
+            # 10. Envia resposta via WhatsApp
+            self.zapi.send_text(phone, response)
+            logger.info(f"✅ Resposta enviada para {phone}")
+            
+            # 11. Sincroniza com CRM (async)
             try:
-                # Se é primeira mensagem, criar lead no CRM
-                if len(history) <= 2:  # Apenas user + assistant
-                    logger.info(f"📤 Sincronizando novo lead com DataCrazy...")
-                    self.crm_sync.sync_lead_create(conversation.lead_id)
-                
-                # Adicionar nota com a conversa
-                note = f"WhatsApp - {name or 'Cliente'}: {text}\nBot: {response}"
-                self.crm_sync.add_note_to_lead(conversation.lead_id, note)
-                
-            except Exception as crm_error:
-                # Não deixar erro do CRM quebrar o fluxo
-                logger.error(f"⚠️  Erro ao sincronizar CRM (não crítico): {crm_error}")
-            
-            # 12. Tratar handoff se necessário
-            if precisa_handoff:
-                logger.warning(f"⚠️  Handoff necessário para conversa {conversation.id}")
-                # Adicionar nota de handoff
-                try:
-                    self.crm_sync.add_note_to_lead(
+                # Adiciona nota da interação
+                if conversation.lead:
+                    self.crm.add_note_to_lead(
                         conversation.lead_id,
-                        "🚨 HANDOFF SOLICITADO - Cliente precisa de atendimento humano"
+                        f"💬 CONVERSA\n\nCliente: {text}\n\nIA: {response}"
                     )
-                except:
-                    pass
+            except Exception as e:
+                logger.warning(f"⚠️  Erro ao sincronizar com CRM: {e}")
             
-            logger.info(f"✅ Mensagem processada com sucesso: {phone}")
+            # 12. Agenda follow-ups (apenas na primeira mensagem)
+            if conversation.status == ConversationStatus.NEW:
+                conversation.status = ConversationStatus.ACTIVE
+                self.db.commit()
+                
+                # Agenda follow-ups automáticos
+                FollowupScheduler.schedule_followups(conversation.id, self.db)
+                logger.info(f"📅 Follow-ups agendados para conversa {conversation.id}")
             
-            return True
+            logger.info(f"✅ Mensagem processada com sucesso")
             
         except Exception as e:
             logger.error(f"❌ Erro ao processar mensagem: {e}")
-            return False
+            raise
+    
+    def _get_or_create_conversation(self, phone: str, name: str = None):
+        """Busca ou cria uma conversa"""
+        # Busca conversa ativa
+        conversation = self.db.query(Conversation).filter(
+            Conversation.phone == phone,
+            Conversation.status.in_([
+                ConversationStatus.NEW,
+                ConversationStatus.ACTIVE,
+                ConversationStatus.QUALIFIED
+            ])
+        ).first()
         
-        finally:
-            self.conv_manager.close()
+        if conversation:
+            logger.info(f"📖 Conversa existente encontrada: {conversation.id}")
+            return conversation
+        
+        # Cria nova conversa
+        logger.info(f"🆕 Criando nova conversa para {phone}")
+        
+        # Get/Create Lead
+        lead = self._get_or_create_lead(phone, name)
+        
+        conversation = Conversation(
+            phone=phone,
+            lead_id=lead.id,
+            status=ConversationStatus.NEW,
+            current_stage=ConversationStage.INITIAL_CONTACT,
+            last_message_at=datetime.utcnow()
+        )
+        
+        self.db.add(conversation)
+        self.db.commit()
+        
+        logger.info(f"✅ Conversa criada: {conversation.id}")
+        
+        # Sincroniza lead com CRM
+        try:
+            self.crm.sync_lead(lead.id)
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao sincronizar lead com CRM: {e}")
+        
+        return conversation
+    
+    def _get_or_create_lead(self, phone: str, name: str = None):
+        """Busca ou cria um lead"""
+        lead = self.db.query(Lead).filter(Lead.phone == phone).first()
+        
+        if lead:
+            logger.info(f"📖 Lead existente: {lead.id}")
+            return lead
+        
+        # Cria novo lead
+        lead = Lead(
+            phone=phone,
+            name=name or "Cliente",
+            origin="whatsapp"
+        )
+        
+        self.db.add(lead)
+        self.db.commit()
+        
+        logger.info(f"✅ Lead criado: {lead.id}")
+        return lead
+    
+    def _get_conversation_history(self, conversation_id: int, limit: int = 10):
+        """Busca histórico de mensagens"""
+        messages = self.db.query(Message).filter(
+            Message.conversation_id == conversation_id
+        ).order_by(Message.created_at.desc()).limit(limit).all()
+        
+        # Inverte ordem (mais antigas primeiro)
+        messages.reverse()
+        
+        history = []
+        for msg in messages:
+            history.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        return history

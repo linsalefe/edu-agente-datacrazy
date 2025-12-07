@@ -23,13 +23,16 @@ class Settings(BaseSettings):
     ZAPI_CLIENT_TOKEN: str
     ZAPI_BASE_URL: str = "https://api.z-api.io/instances"
     
-    # DataCrazy
+    # DataCrazy CRM
     DATACRAZY_API_TOKEN: str
-    DATACRAZY_BASE_URL: str = "https://crm.datacrazy.io/api/v1"
+    DATACRAZY_BASE_URL: str = "https://api.g1.datacrazy.io/api/v1"
     
     # Celery
     CELERY_BROKER_URL: Optional[str] = None
     CELERY_RESULT_BACKEND: Optional[str] = None
+    
+    # Notificações (opcional)
+    MANAGER_PHONE: Optional[str] = None
     
     class Config:
         env_file = ".env"

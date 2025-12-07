@@ -1,15 +1,33 @@
-fastapi
-uvicorn[standard]
-pydantic
-pydantic-settings
-python-dotenv
-loguru
-sqlalchemy
-psycopg2-binary
-alembic
-pypdf2
-python-docx
-pgvector
-openai
-requests
-redis
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+pgvector==0.2.4
+
+# OpenAI & LLM
+openai==1.3.7
+
+# Redis
+redis==5.0.1
+
+# Celery (Tarefas Assíncronas)
+celery==5.3.4
+celery[redis]==5.3.4
+
+# HTTP Requests
+requests==2.31.0
+
+# Logging
+loguru==0.7.2
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Utilities
+python-multipart==0.0.6
