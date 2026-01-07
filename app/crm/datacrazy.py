@@ -127,6 +127,26 @@ class DataCrazyClient:
         """Lista leads com filtros opcionais"""
         return self._make_request("GET", "leads", params=params)
     
+    def search_leads(self, search: str, take: int = 10, skip: int = 0) -> Dict:
+        """
+        Busca leads por telefone, email ou nome
+    
+        Args:
+            search: Termo de busca (telefone, email ou nome)
+            take: Quantidade de resultados (padrão: 10)
+            skip: Pular N resultados (paginação)
+    
+        Returns:
+            Lista de leads encontrados
+        """
+        params = {
+            "search": search,
+            "take": take,
+            "skip": skip
+        }
+    
+        logger.info(f"🔍 Buscando leads: {search}")
+        return self._make_request("GET", "leads", params=params)
     # ========== NEGÓCIOS ==========
     
     def create_deal(self, lead_id: str, pipeline_id: str, stage_id: str, data: Dict) -> Dict:
