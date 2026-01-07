@@ -1,19 +1,28 @@
 version: '3.8'
 
 services:
+  # PostgreSQL com pgvector
   postgres:
     image: ankane/pgvector:latest
     container_name: whatsapp_agent_db
     environment:
       POSTGRES_USER: whatsapp_agent
-      POSTGRES_PASSWORD: whatsapp_agent
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-whatsapp_agent}
       POSTGRES_DB: whatsapp_agent
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whatsapp_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp_network
 
+  # Redis
   redis:
     image: redis:7-alpine
     container_name: whatsapp_agent_redis
@@ -21,8 +30,83 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    restart: unless-stopped
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp_network
+
+  # FastAPI App
+  app:
+    build: .
+    container_name: whatsapp_agent_app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - whatsapp_network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Celery Worker
+  celery_worker:
+    build: .
+    container_name: whatsapp_agent_celery
+    command: celery -A app.workers.celery_config worker --loglevel=info
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+      - app
+    restart: always
+    networks:
+      - whatsapp_network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # Celery Beat (Scheduler)
+  celery_beat:
+    build: .
+    container_name: whatsapp_agent_beat
+    command: celery -A app.workers.celery_config beat --loglevel=info
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+      - app
+    restart: always
+    networks:
+      - whatsapp_network
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
+
+networks:
+  whatsapp_network:
+    driver: bridge
