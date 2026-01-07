@@ -26,3 +26,15 @@ class Lead(Base):
         """Verifica se o lead está qualificado"""
         qual = self.get_qualification_data()
         return qual.get('score', 0) >= 70
+    
+    def to_dict(self):
+        """Converte lead para dicionário"""
+        return {
+            'id': self.id,
+            'phone': self.phone,
+            'name': self.name,
+            'email': self.email,
+            'profile': self.profile,
+            'datacrazy_id': self.datacrazy_id,
+            'origin': self.origin
+        }

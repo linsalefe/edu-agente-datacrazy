@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, BackgroundTasks
 from app.config import settings
 from app.services.message_processor import MessageProcessor
+from app.database import get_db
 from loguru import logger
 
 app = FastAPI(
@@ -28,10 +29,14 @@ async def health_check():
     }
 
 
-def process_message_background(phone: str, text: str, name: str):
+async def process_message_background(phone: str, text: str, name: str):
     """Processa mensagem em background"""
-    processor = MessageProcessor()
-    processor.process_message(phone, text, name)
+    db = next(get_db())
+    try:
+        processor = MessageProcessor(db)
+        await processor.process_message(phone, text, name)
+    finally:
+        db.close()
 
 
 @app.post("/webhook")

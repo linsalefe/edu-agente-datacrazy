@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index
+from sqlalchemy import Column, Integer, String, DateTime, Enum as SQLEnum, Index, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime, timedelta
 import enum
@@ -26,7 +27,7 @@ class Conversation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     phone = Column(String(20), nullable=False, index=True)
-    lead_id = Column(Integer, nullable=True)
+    lead_id = Column(Integer, ForeignKey('leads.id'), nullable=True)
     status = Column(SQLEnum(ConversationStatus), default=ConversationStatus.active, nullable=False)
     current_stage = Column(SQLEnum(ConversationStage), default=ConversationStage.novo, nullable=False)
     
@@ -34,6 +35,9 @@ class Conversation(Base):
     handoff_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # RELACIONAMENTO COM LEAD
+    lead = relationship("Lead", backref="conversations")
 
     # Índices compostos
     __table_args__ = (

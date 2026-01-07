@@ -10,8 +10,8 @@ from loguru import logger
 from app.models.conversation import Conversation, ConversationStatus, ConversationStage
 from app.models.message import Message
 from app.models.lead import Lead
-from app.rag.query import build_context
-from app.llm.response_generator import generate_response
+from app.rag.query import RAGQuery
+from app.llm.response_generator import ResponseGenerator
 from app.channels.whatsapp.zapi import ZAPIClient
 from app.crm.sync_service import CRMSyncService
 from app.core.scheduler import FollowupScheduler
@@ -24,12 +24,9 @@ class MessageProcessor:
     
     def __init__(self, db: Session):
         self.db = db
-        self.zapi = ZAPIClient(
-            token=settings.ZAPI_TOKEN,
-            instance=settings.ZAPI_INSTANCE,
-            client_token=settings.ZAPI_CLIENT_TOKEN
-        )
+        self.zapi = ZAPIClient()
         self.crm = CRMSyncService(db)
+        self.response_gen = ResponseGenerator()
     
     async def process_message(self, phone: str, text: str, name: str = None):
         """
@@ -47,7 +44,7 @@ class MessageProcessor:
             conversation = self._get_or_create_conversation(phone, name)
             
             # 2. Verifica se está em handoff
-            if conversation.status == ConversationStatus.HANDOFF:
+            if conversation.status == ConversationStatus.handoff:
                 logger.info(f"⚠️  Conversa {conversation.id} está em handoff - ignorando")
                 return
             
@@ -65,17 +62,18 @@ class MessageProcessor:
             self.db.commit()
             
             # 5. Busca contexto RAG
-            context = build_context(text, top_k=4)
+            rag_query = RAGQuery()
+            context = rag_query.build_context(text, top_k=4)
             logger.info(f"📚 Contexto RAG obtido: {len(context)} caracteres")
             
             # 6. Busca histórico da conversa
             history = self._get_conversation_history(conversation.id, limit=10)
             
             # 7. Gera resposta da IA
-            response, needs_handoff = generate_response(
+            response, needs_handoff = self.response_gen.generate_response(
                 user_message=text,
                 history=history,
-                stage=conversation.current_stage,
+                stage=conversation.current_stage.value,
                 lead_data=conversation.lead.to_dict() if conversation.lead else {},
                 context=context
             )
@@ -116,11 +114,12 @@ class MessageProcessor:
             except Exception as e:
                 logger.warning(f"⚠️  Erro ao sincronizar com CRM: {e}")
             
-            # 12. Agenda follow-ups (apenas na primeira mensagem)
-            if conversation.status == ConversationStatus.NEW:
-                conversation.status = ConversationStatus.ACTIVE
-                self.db.commit()
-                
+            # 12. Agenda follow-ups (apenas para novas conversas)
+            messages_count = self.db.query(Message).filter(
+                Message.conversation_id == conversation.id
+            ).count()
+            
+            if messages_count == 2:  # primeira interação (user + assistant)
                 # Agenda follow-ups automáticos
                 FollowupScheduler.schedule_followups(conversation.id, self.db)
                 logger.info(f"📅 Follow-ups agendados para conversa {conversation.id}")
@@ -136,11 +135,7 @@ class MessageProcessor:
         # Busca conversa ativa
         conversation = self.db.query(Conversation).filter(
             Conversation.phone == phone,
-            Conversation.status.in_([
-                ConversationStatus.NEW,
-                ConversationStatus.ACTIVE,
-                ConversationStatus.QUALIFIED
-            ])
+            Conversation.status == ConversationStatus.active
         ).first()
         
         if conversation:
@@ -156,8 +151,8 @@ class MessageProcessor:
         conversation = Conversation(
             phone=phone,
             lead_id=lead.id,
-            status=ConversationStatus.NEW,
-            current_stage=ConversationStage.INITIAL_CONTACT,
+            status=ConversationStatus.active,
+            current_stage=ConversationStage.novo,
             last_message_at=datetime.utcnow()
         )
         

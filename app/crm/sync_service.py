@@ -1,204 +1,269 @@
+from typing import Optional, Dict, Any
+
+from loguru import logger
+import requests
+
+from app.config import settings
 from app.crm.datacrazy import DataCrazyClient
 from app.crm.stage_mapper import StageMapper
 from app.models.lead import Lead
 from app.models.conversation import Conversation
-from app.database import SessionLocal
-from loguru import logger
-from typing import Optional, Dict
 
 
 class CRMSyncService:
     """Serviço de sincronização com DataCrazy CRM"""
-    
-    def __init__(self):
-        self.crm = DataCrazyClient()
-        self.db = SessionLocal()
-    
+
+    def __init__(self, db):
+        self.crm = DataCrazyClient(
+            api_token=settings.DATACRAZY_API_TOKEN,
+            base_url=settings.DATACRAZY_BASE_URL
+        )
+        self.db = db
+
+    # -------------------------
+    # Helpers
+    # -------------------------
+    def _get_lead(self, lead_id: int) -> Optional[Lead]:
+        lead = self.db.query(Lead).filter(Lead.id == lead_id).first()
+        if not lead:
+            logger.error(f"❌ Lead {lead_id} não encontrado no banco")
+        return lead
+
+    def _extract_datacrazy_id(self, result: Any) -> Optional[str]:
+        """
+        Extrai ID do lead retornado pela API.
+        Suporta:
+          - {"data": {"id": "..."}}
+          - {"id": "..."}
+        """
+        if not isinstance(result, dict):
+            return None
+
+        data = result.get("data")
+        if isinstance(data, dict) and data.get("id"):
+            return str(data["id"])
+
+        if result.get("id"):
+            return str(result["id"])
+
+        return None
+
+    def _find_existing_lead_id_by_phone(self, phone: str) -> Optional[str]:
+        """
+        Busca lead existente no DataCrazy via GET /leads?search=<phone>.
+        Retorna o id do primeiro lead encontrado.
+        """
+        try:
+            if not phone:
+                return None
+
+            # Recomendado: buscar pelo rawPhone (só números), mas o search costuma aceitar ambos.
+            result = self.crm.search_leads(search=phone, take=1, skip=0)
+
+            if not isinstance(result, dict):
+                return None
+
+            data = result.get("data")
+            if isinstance(data, list) and len(data) > 0:
+                lead_obj = data[0]
+                if isinstance(lead_obj, dict) and lead_obj.get("id"):
+                    return str(lead_obj["id"])
+
+            return None
+
+        except Exception as e:
+            logger.exception(f"❌ Erro ao buscar lead existente por telefone ({phone}): {e}")
+            return None
+
+    def _ensure_datacrazy_id(self, lead_id: int) -> Optional[str]:
+        lead = self._get_lead(lead_id)
+        if not lead:
+            return None
+
+        if lead.datacrazy_id:
+            return str(lead.datacrazy_id)
+
+        logger.warning(f"⚠️  Lead {lead_id} sem datacrazy_id, criando/recuperando no DataCrazy...")
+        ok = self.sync_lead_create(lead_id)
+        if not ok:
+            return None
+
+        lead = self._get_lead(lead_id)
+        if not lead or not lead.datacrazy_id:
+            logger.error(f"❌ Não foi possível persistir datacrazy_id para lead {lead_id}")
+            return None
+
+        return str(lead.datacrazy_id)
+
+    # -------------------------
+    # Create
+    # -------------------------
     def sync_lead_create(self, lead_id: int) -> bool:
         """
-        Cria lead no DataCrazy
-        
-        Args:
-            lead_id: ID do lead no nosso banco
-            
-        Returns:
-            True se criado com sucesso
+        Cria lead no DataCrazy.
+        Se já existir (duplicado), busca e salva o ID existente.
         """
-        
-        try:
-            # Buscar lead no banco
-            lead = self.db.query(Lead).filter(Lead.id == lead_id).first()
-            
-            if not lead:
-                logger.error(f"❌ Lead {lead_id} não encontrado no banco")
-                return False
-            
-            # Se já tem datacrazy_id, não cria novamente
-            if lead.datacrazy_id:
-                logger.info(f"⏭️  Lead {lead_id} já tem datacrazy_id: {lead.datacrazy_id}")
-                return True
-            
-            # Preparar dados para DataCrazy
-            data = {
-                "name": lead.name or "Lead sem nome",
-                "phone": lead.phone,
-                "email": lead.email,
-                "origin": lead.origin or "whatsapp"
-            }
-            
-            # Adicionar custom fields do profile
-            if lead.profile:
-                data["custom_fields"] = lead.profile
-            
-            # Criar no DataCrazy
-            result = self.crm.create_lead(data)
-            
-            if result and result.get('data'):
-                datacrazy_id = result['data'].get('id')
-                
-                # Salvar datacrazy_id no nosso banco
-                lead.datacrazy_id = datacrazy_id
-                self.db.commit()
-                
-                logger.info(f"✅ Lead {lead_id} sincronizado: DataCrazy ID {datacrazy_id}")
-                return True
-            else:
-                logger.error(f"❌ Falha ao criar lead {lead_id} no DataCrazy")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erro ao sincronizar lead {lead_id}: {e}")
+        lead = self._get_lead(lead_id)
+        if not lead:
             return False
-        finally:
-            self.db.close()
-    
-    def sync_lead_update(self, lead_id: int, updates: Dict) -> bool:
-        """
-        Atualiza lead no DataCrazy
-        
-        Args:
-            lead_id: ID do lead no nosso banco
-            updates: Dados para atualizar
-            
-        Returns:
-            True se atualizado com sucesso
-        """
-        
+
+        if lead.datacrazy_id:
+            logger.info(f"⏭️  Lead {lead_id} já tem datacrazy_id: {lead.datacrazy_id}")
+            return True
+
+        data = {
+            "name": lead.name or "Lead sem nome",
+            "phone": lead.phone,
+            "email": lead.email,
+            "origin": lead.origin or "whatsapp",
+        }
+
+        if getattr(lead, "profile", None):
+            data["custom_fields"] = lead.profile
+
         try:
-            lead = self.db.query(Lead).filter(Lead.id == lead_id).first()
-            
-            if not lead:
-                logger.error(f"❌ Lead {lead_id} não encontrado")
+            result = self.crm.create_lead(data)
+
+            datacrazy_id = self._extract_datacrazy_id(result)
+            if datacrazy_id:
+                lead.datacrazy_id = datacrazy_id
+                self.db.add(lead)
+                self.db.commit()
+                logger.info(f"✅ Lead {lead_id} criado no DataCrazy: {datacrazy_id}")
+                return True
+
+            logger.error(f"❌ create_lead retornou sem id. Resposta: {result}")
+            return False
+
+        except requests.exceptions.HTTPError as e:
+            # Aqui cai quando DataCrazyClient faz raise_for_status() (ex: 400 duplicado)
+            resp = getattr(e, "response", None)
+            payload = None
+            try:
+                if resp is not None:
+                    payload = resp.json()
+            except Exception:
+                payload = None
+
+            # Detecta duplicidade
+            code = None
+            try:
+                if isinstance(payload, dict):
+                    code = payload.get("code") or payload.get("message", {}).get("code")
+            except Exception:
+                code = None
+
+            if code == "lead-with-same-contact-exists":
+                logger.warning(f"🔁 Lead já existe no DataCrazy. Buscando ID por telefone: {lead.phone}")
+                existing_id = self._find_existing_lead_id_by_phone(str(lead.phone))
+                if existing_id:
+                    lead.datacrazy_id = existing_id
+                    self.db.add(lead)
+                    self.db.commit()
+                    logger.info(f"✅ Lead {lead_id} já existia. ID recuperado e salvo: {existing_id}")
+                    return True
+
+                logger.error(f"❌ Lead duplicado, mas não consegui localizar via search. Payload: {payload}")
                 return False
-            
-            if not lead.datacrazy_id:
-                logger.warning(f"⚠️  Lead {lead_id} sem datacrazy_id, criando...")
-                return self.sync_lead_create(lead_id)
-            
-            # Atualizar no DataCrazy
-            result = self.crm.update_lead(lead.datacrazy_id, updates)
-            
+
+            logger.exception(f"❌ HTTPError ao criar lead {lead_id}: {e} | payload={payload}")
+            self.db.rollback()
+            return False
+
+        except Exception as e:
+            logger.exception(f"❌ Erro ao sincronizar lead {lead_id}: {e}")
+            self.db.rollback()
+            return False
+
+    # -------------------------
+    # Update
+    # -------------------------
+    def sync_lead_update(self, lead_id: int, updates: Dict) -> bool:
+        try:
+            datacrazy_id = self._ensure_datacrazy_id(lead_id)
+            if not datacrazy_id:
+                return False
+
+            result = self.crm.update_lead(datacrazy_id, updates)
             if result:
                 logger.info(f"✅ Lead {lead_id} atualizado no DataCrazy")
                 return True
-            else:
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erro ao atualizar lead {lead_id}: {e}")
+
+            logger.error(f"❌ Falha ao atualizar lead {lead_id}. updates={updates}")
             return False
-        finally:
-            self.db.close()
-    
+
+        except Exception as e:
+            logger.exception(f"❌ Erro ao atualizar lead {lead_id}: {e}")
+            return False
+
+    # -------------------------
+    # Stage change
+    # -------------------------
     def sync_stage_change(self, conversation_id: int) -> bool:
-        """
-        Sincroniza mudança de estágio da conversa
-        
-        Args:
-            conversation_id: ID da conversa
-            
-        Returns:
-            True se sincronizado com sucesso
-        """
-        
         try:
             conversation = self.db.query(Conversation).filter(
                 Conversation.id == conversation_id
             ).first()
-            
+
             if not conversation:
                 logger.error(f"❌ Conversa {conversation_id} não encontrada")
                 return False
-            
-            lead = self.db.query(Lead).filter(Lead.id == conversation.lead_id).first()
-            
-            if not lead or not lead.datacrazy_id:
-                logger.warning(f"⚠️  Lead sem datacrazy_id, sincronizando primeiro...")
-                self.sync_lead_create(conversation.lead_id)
-                # Recarregar lead
-                lead = self.db.query(Lead).filter(Lead.id == conversation.lead_id).first()
-            
-            if not lead or not lead.datacrazy_id:
+
+            lead_id = conversation.lead_id
+            if not lead_id:
+                logger.warning(f"⚠️  Conversa {conversation_id} sem lead_id")
                 return False
-            
-            # Mapear estágio
-            stage_id = StageMapper.map_stage_to_datacrazy(conversation.current_stage.value)
-            pipeline_id = StageMapper.get_pipeline_id()
-            
-            # TODO: Verificar se já existe deal para este lead
-            # Por enquanto, vamos assumir que vamos atualizar o lead
-            
+
+            datacrazy_id = self._ensure_datacrazy_id(lead_id)
+            if not datacrazy_id:
+                return False
+
+            # Mantive compatível com o seu mapper
+            _stage_id = StageMapper.map_stage_to_datacrazy(conversation.current_stage.value)
+            _pipeline_id = StageMapper.get_pipeline_id()
+
             update_data = {
                 "stage": conversation.current_stage.value,
                 "custom_fields": {
                     "stage_interno": conversation.current_stage.value,
-                    "status_conversa": conversation.status.value
+                    "status_conversa": conversation.status.value,
                 }
             }
-            
-            result = self.crm.update_lead(lead.datacrazy_id, update_data)
-            
+
+            result = self.crm.update_lead(datacrazy_id, update_data)
             if result:
                 logger.info(f"✅ Estágio sincronizado: Conversa {conversation_id}")
                 return True
-            else:
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erro ao sincronizar estágio: {e}")
+
+            logger.error(f"❌ Falha ao sincronizar estágio: Conversa {conversation_id}")
             return False
-        finally:
-            self.db.close()
-    
+
+        except Exception as e:
+            logger.exception(f"❌ Erro ao sincronizar estágio: {e}")
+            return False
+
+    # -------------------------
+    # Add note
+    # -------------------------
     def add_note_to_lead(self, lead_id: int, note_content: str) -> bool:
-        """
-        Adiciona nota ao lead no DataCrazy
-        
-        Args:
-            lead_id: ID do lead no nosso banco
-            note_content: Conteúdo da nota
-            
-        Returns:
-            True se nota adicionada
-        """
-        
         try:
-            lead = self.db.query(Lead).filter(Lead.id == lead_id).first()
-            
-            if not lead or not lead.datacrazy_id:
-                logger.warning(f"⚠️  Lead {lead_id} sem datacrazy_id")
+            if not note_content or not note_content.strip():
+                logger.warning("⚠️  Nota vazia, ignorando add_note_to_lead")
                 return False
-            
-            result = self.crm.add_note(lead.datacrazy_id, note_content)
-            
+
+            datacrazy_id = self._ensure_datacrazy_id(lead_id)
+            if not datacrazy_id:
+                logger.warning(f"⚠️  Não foi possível garantir datacrazy_id para lead {lead_id}. Nota não enviada.")
+                return False
+
+            result = self.crm.add_note(datacrazy_id, note_content)
             if result:
-                logger.info(f"✅ Nota adicionada ao lead {lead_id}")
+                logger.info(f"✅ Nota adicionada ao lead {lead_id} (datacrazy_id={datacrazy_id})")
                 return True
-            else:
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Erro ao adicionar nota: {e}")
+
+            logger.error(f"❌ Falha ao adicionar nota no lead {lead_id} (datacrazy_id={datacrazy_id})")
             return False
-        finally:
-            self.db.close()
+
+        except Exception as e:
+            logger.exception(f"❌ Erro ao adicionar nota: {e}")
+            return False
