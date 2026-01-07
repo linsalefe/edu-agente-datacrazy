@@ -1,8 +1,15 @@
 from fastapi import FastAPI, Request, BackgroundTasks
+from datetime import datetime
+from sqlalchemy import text
+import redis
+
 from app.config import settings
 from app.services.message_processor import MessageProcessor
 from app.database import get_db
-from loguru import logger
+from app.utils.logger import logger
+from app.utils.metrics import MetricsCollector
+from app.channels.whatsapp.zapi import ZAPIClient
+from app.crm.datacrazy import DataCrazyClient
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -27,6 +34,65 @@ async def health_check():
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION
     }
+
+
+@app.get("/metrics")
+async def metrics():
+    """Endpoint de métricas para monitoramento (Prometheus)"""
+    return MetricsCollector.get_prometheus_format()
+
+
+@app.get("/health/detailed")
+async def health_detailed():
+    """Health check detalhado com status de dependências"""
+    
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "checks": {}
+    }
+    
+    # Check Database
+    try:
+        db = next(get_db())
+        db.execute(text("SELECT 1"))
+        health_status["checks"]["database"] = "healthy"
+        db.close()
+    except Exception as e:
+        health_status["checks"]["database"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "unhealthy"
+    
+    # Check Redis
+    try:
+        r = redis.from_url(settings.REDIS_URL)
+        r.ping()
+        health_status["checks"]["redis"] = "healthy"
+    except Exception as e:
+        health_status["checks"]["redis"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "unhealthy"
+    
+    # Check Z-API
+    try:
+        zapi = ZAPIClient()
+        status = zapi.get_instance_status()
+        health_status["checks"]["zapi"] = "healthy" if status else "unhealthy"
+    except Exception as e:
+        health_status["checks"]["zapi"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check DataCrazy
+    try:
+        crm = DataCrazyClient(api_token=settings.DATACRAZY_API_TOKEN)
+        if crm.health_check():
+            health_status["checks"]["datacrazy"] = "healthy"
+        else:
+            health_status["checks"]["datacrazy"] = "unhealthy"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["checks"]["datacrazy"] = f"unhealthy: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    return health_status
 
 
 async def process_message_background(phone: str, text: str, name: str):
