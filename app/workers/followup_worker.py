@@ -2,7 +2,7 @@
 Worker para envio de follow-ups automáticos
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from loguru import logger
 
@@ -30,7 +30,7 @@ def send_followup(followup_id: int):
         # Busca follow-up
         followup = db.query(Followup).filter(
             Followup.id == followup_id,
-            Followup.status == FollowupStatus.PENDING
+            Followup.status == FollowupStatus.pending
         ).first()
         
         if not followup:
@@ -44,22 +44,22 @@ def send_followup(followup_id: int):
         
         if not conversation:
             logger.error(f"❌ Conversa {followup.conversation_id} não encontrada")
-            followup.status = FollowupStatus.CANCELLED
+            followup.status = FollowupStatus.cancelled
             db.commit()
             return
         
         # Verifica se cliente já respondeu (cancela follow-up)
-        time_since_last_message = datetime.utcnow() - conversation.last_message_at
+        time_since_last_message = datetime.now(timezone.utc) - conversation.last_message_at
         if time_since_last_message < timedelta(hours=1):
             logger.info(f"✅ Cliente já respondeu - cancelando follow-up {followup_id}")
-            followup.status = FollowupStatus.CANCELLED
+            followup.status = FollowupStatus.cancelled
             db.commit()
             return
         
         # Verifica se conversa foi para handoff (cancela follow-up)
-        if conversation.status == ConversationStatus.HANDOFF:
+        if conversation.status == ConversationStatus.handoff:
             logger.info(f"✅ Conversa em handoff - cancelando follow-up {followup_id}")
-            followup.status = FollowupStatus.CANCELLED
+            followup.status = FollowupStatus.cancelled
             db.commit()
             return
         
@@ -67,21 +67,17 @@ def send_followup(followup_id: int):
         message = get_followup_message(followup.type, conversation)
         
         # Envia via WhatsApp
-        zapi = ZAPIClient(
-            token=settings.ZAPI_TOKEN,
-            instance=settings.ZAPI_INSTANCE,
-            client_token=settings.ZAPI_CLIENT_TOKEN
-        )
+        zapi = ZAPIClient()
         
         result = zapi.send_text(conversation.phone, message)
         
         if result:
             logger.info(f"✅ Follow-up {followup_id} enviado com sucesso")
-            followup.status = FollowupStatus.SENT
-            followup.executed_at = datetime.utcnow()
+            followup.status = FollowupStatus.sent
+            followup.executed_at = datetime.now(timezone.utc)
         else:
             logger.error(f"❌ Falha ao enviar follow-up {followup_id}")
-            followup.status = FollowupStatus.CANCELLED
+            followup.status = FollowupStatus.cancelled
         
         db.commit()
         
@@ -104,9 +100,9 @@ def check_pending_followups():
     
     try:
         # Busca follow-ups que já passaram da hora agendada
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         pending = db.query(Followup).filter(
-            Followup.status == FollowupStatus.PENDING,
+            Followup.status == FollowupStatus.pending,
             Followup.scheduled_for <= now
         ).all()
         
@@ -134,7 +130,7 @@ def get_followup_message(followup_type: FollowupType, conversation: Conversation
         Mensagem a ser enviada
     """
     messages = {
-        FollowupType.THREE_HOURS: f"""
+        FollowupType.three_hours: f"""
 Olá! 👋
 
 Vi que você demonstrou interesse em fazer faculdade conosco há algumas horas.
@@ -142,7 +138,7 @@ Vi que você demonstrou interesse em fazer faculdade conosco há algumas horas.
 Ainda tem alguma dúvida? Estou aqui para ajudar! 😊
         """.strip(),
         
-        FollowupType.ONE_DAY: f"""
+        FollowupType.one_day: f"""
 Oi! Como vai? 
 
 Não queria deixar sua dúvida sem resposta! 
@@ -152,7 +148,7 @@ Sobre a faculdade que você perguntou, posso te passar mais informações?
 📚 Temos opções incríveis que podem se encaixar no seu perfil!
         """.strip(),
         
-        FollowupType.THREE_DAYS: f"""
+        FollowupType.three_days: f"""
 Olá! 
 
 Percebi que você estava interessado em começar uma graduação.
@@ -162,7 +158,7 @@ Percebi que você estava interessado em começar uma graduação.
 Posso tirar suas dúvidas? Temos condições especiais agora!
         """.strip(),
         
-        FollowupType.SEVEN_DAYS: f"""
+        FollowupType.seven_days: f"""
 Oi! Tudo bem?
 
 Vi que você demonstrou interesse em fazer faculdade há uma semana.
@@ -178,4 +174,4 @@ O que acha?
         """.strip(),
     }
     
-    return messages.get(followup_type, messages[FollowupType.ONE_DAY])
+    return messages.get(followup_type, messages[FollowupType.one_day])
