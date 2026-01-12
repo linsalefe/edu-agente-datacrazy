@@ -2,8 +2,7 @@
 Serviço de Handoff
 Gerencia transferência de conversas para atendimento humano
 """
-
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from loguru import logger
 
@@ -41,8 +40,8 @@ class HandoffService:
                 return False
             
             # Atualiza status da conversa
-            conversation.status = ConversationStatus.HANDOFF
-            conversation.handoff_at = datetime.utcnow()
+            conversation.status = ConversationStatus.handoff
+            conversation.handoff_at = datetime.now(timezone.utc)
             
             # Cancela follow-ups pendentes
             FollowupScheduler.cancel_followups(conversation_id, db)
@@ -58,7 +57,7 @@ class HandoffService:
                 crm = CRMSyncService(db)
                 crm.add_note_to_lead(
                     conversation.lead_id,
-                    f"🤝 HANDOFF SOLICITADO\nMotivo: {reason}\nData: {datetime.utcnow().strftime('%d/%m/%Y %H:%M')}"
+                    f"🤝 HANDOFF SOLICITADO\nMotivo: {reason}\nData: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M')}"
                 )
             except Exception as e:
                 logger.warning(f"⚠️  Erro ao sincronizar handoff com CRM: {e}")
@@ -76,11 +75,7 @@ class HandoffService:
     def _notify_client(conversation: Conversation, db: Session):
         """Notifica cliente sobre handoff"""
         try:
-            zapi = ZAPIClient(
-                token=settings.ZAPI_TOKEN,
-                instance=settings.ZAPI_INSTANCE,
-                client_token=settings.ZAPI_CLIENT_TOKEN
-            )
+            zapi = ZAPIClient()
             
             message = """
 Entendo sua situação! 😊

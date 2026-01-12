@@ -3,7 +3,7 @@ Scheduler de Follow-ups
 Agenda follow-ups automáticos para conversas
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from loguru import logger
 
@@ -36,14 +36,14 @@ class FollowupScheduler:
                 logger.error(f"❌ Conversa {conversation_id} não encontrada")
                 return
             
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             # Define os intervalos de follow-up
             followup_intervals = {
-                FollowupType.THREE_HOURS: timedelta(hours=3),
-                FollowupType.ONE_DAY: timedelta(days=1),
-                FollowupType.THREE_DAYS: timedelta(days=3),
-                FollowupType.SEVEN_DAYS: timedelta(days=7),
+                FollowupType.three_hours: timedelta(hours=3),
+                FollowupType.one_day: timedelta(days=1),
+                FollowupType.three_days: timedelta(days=3),
+                FollowupType.seven_days: timedelta(days=7),
             }
             
             # Cria os follow-ups
@@ -54,7 +54,7 @@ class FollowupScheduler:
                     conversation_id=conversation_id,
                     type=followup_type,
                     scheduled_for=scheduled_for,
-                    status=FollowupStatus.PENDING,
+                    status=FollowupStatus.pending,
                     message=f"Follow-up automático {followup_type.value}"
                 )
                 
@@ -83,12 +83,12 @@ class FollowupScheduler:
             # Busca follow-ups pendentes
             pending = db.query(Followup).filter(
                 Followup.conversation_id == conversation_id,
-                Followup.status == FollowupStatus.PENDING
+                Followup.status == FollowupStatus.pending
             ).all()
             
             # Cancela cada um
             for followup in pending:
-                followup.status = FollowupStatus.CANCELLED
+                followup.status = FollowupStatus.cancelled
                 logger.info(f"✅ Follow-up {followup.id} cancelado")
             
             db.commit()
@@ -121,7 +121,7 @@ class FollowupScheduler:
             
             old_time = followup.scheduled_for
             followup.scheduled_for = new_time
-            followup.status = FollowupStatus.PENDING
+            followup.status = FollowupStatus.pending
             
             db.commit()
             logger.info(f"✅ Follow-up reagendado: {old_time} → {new_time}")
