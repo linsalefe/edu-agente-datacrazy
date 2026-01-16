@@ -1,8 +1,13 @@
+import sys
+import os
+
+# Adiciona o diretório raiz ao path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from app.rag.loader import RAGLoader
 from app.rag.splitter import RAGSplitter
 from app.rag.vectorstore import VectorStore
 from loguru import logger
-import sys
 
 
 def load_rag_data():
@@ -29,7 +34,7 @@ def load_rag_data():
         
         logger.info(f"✅ {len(chunks)} chunks gerados")
         
-        # 3. Limpar base anterior (opcional - comentar em produção)
+        # 3. Limpar base anterior
         logger.info("🗑️  Passo 3/4: Limpando base anterior...")
         vectorstore = VectorStore()
         vectorstore.clear_all()
@@ -48,7 +53,6 @@ def load_rag_data():
                 )
                 success_count += 1
                 
-                # Log de progresso
                 if i % 5 == 0:
                     logger.info(f"   Progresso: {i}/{len(chunks)} chunks processados")
                     

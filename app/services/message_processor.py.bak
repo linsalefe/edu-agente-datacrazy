@@ -335,43 +335,28 @@ class MessageProcessor:
             lead.profile = profile
             self.db.commit()
             logger.info(f"💾 Perfil atualizado (qualification): {qual}")
-    def _should_advance_stage(self, conversation: Conversation, lead_data: dict) -> str:
-        """
-        Determina se deve avançar o stage baseado nas informações coletadas
 
-        Returns:
-            Novo stage ou None se não deve mudar
-        """
+    def _should_advance_stage(self, conversation: Conversation, lead_data: dict) -> Optional[str]:
+        """Determina se deve avançar o stage baseado nas informações coletadas."""
         current_stage = conversation.current_stage.value
 
-        # NORMALIZA profile -> qualification (novo formato)
+        # Normaliza profile -> qualification
         profile = lead_data.get("profile") or {}
         if isinstance(profile, dict) and isinstance(profile.get("qualification"), dict):
-            qual = profile.get("qualification") or {}
-        elif isinstance(profile, dict):
-            qual = profile
-        else:
-            qual = {}
+            profile = profile["qualification"]
 
         has_name = bool(lead_data.get("name") and lead_data["name"] != "Cliente")
-
-        city = qual.get("city")
-        course = qual.get("course")
-        education_level = qual.get("education_level")
-        has_high_school = qual.get("has_high_school")
-        motivation = qual.get("motivation")
-
-        has_city = bool(city)
-        has_course = bool(course)
-        has_education = bool(education_level) or (has_high_school is True)
-        has_motivation = bool(motivation)
+        has_city = bool(profile.get("city"))
+        has_course = bool(profile.get("course"))
+        has_education = bool(profile.get("education_level"))
+        has_motivation = bool(profile.get("motivation"))
 
         logger.info("🔍 Verificando avanço de stage:")
         logger.info(f"   Stage atual: {current_stage}")
         logger.info(f"   has_name: {has_name} ({lead_data.get('name')})")
-        logger.info(f"   has_city: {has_city} ({city})")
-        logger.info(f"   has_course: {has_course} ({course})")
-        logger.info(f"   has_education: {has_education} ({education_level or has_high_school})")
+        logger.info(f"   has_city: {has_city} ({profile.get('city')})")
+        logger.info(f"   has_course: {has_course} ({profile.get('course')})")
+        logger.info(f"   has_education: {has_education} ({profile.get('education_level')})")
         logger.info(f"   has_motivation: {has_motivation}")
 
         if current_stage == "novo":
@@ -391,7 +376,6 @@ class MessageProcessor:
 
         logger.info(f"⏸️  Stage permanece: {current_stage}")
         return None
-
 
     def _is_ai_paused(self, lead: Lead) -> bool:
         """
@@ -429,5 +413,3 @@ class MessageProcessor:
         except Exception as e:
             logger.warning(f"⚠️  Erro ao verificar tags do lead {lead.id}: {e}")
             return False
-        
-        
