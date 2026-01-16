@@ -8,10 +8,12 @@ from typing import Dict, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.channels.whatsapp.zapi import ZAPIClient
 from app.config import settings
 from app.core.scheduler import FollowupScheduler
+
 from app.crm.sync_service import CRMSyncService
 from app.llm.response_generator import ResponseGenerator
 from app.models.conversation import Conversation, ConversationStage, ConversationStatus
@@ -297,7 +299,7 @@ class MessageProcessor:
         elif "formiga" in text_lower:
             qual["city"] = "Formiga"
             updated = True
-            logger.info("�� Cidade detectada: Formiga")
+            logger.info("📍 Cidade detectada: Formiga")
 
         # Detectar escolaridade
         if text_lower in ["sim", "s", "já", "ja", "tenho", "concluí", "conclui", "terminei"]:
@@ -333,8 +335,10 @@ class MessageProcessor:
         if updated:
             profile["qualification"] = qual
             lead.profile = profile
+            flag_modified(lead, "profile")
             self.db.commit()
             logger.info(f"💾 Perfil atualizado (qualification): {qual}")
+
     def _should_advance_stage(self, conversation: Conversation, lead_data: dict) -> str:
         """
         Determina se deve avançar o stage baseado nas informações coletadas
@@ -392,7 +396,6 @@ class MessageProcessor:
         logger.info(f"⏸️  Stage permanece: {current_stage}")
         return None
 
-
     def _is_ai_paused(self, lead: Lead) -> bool:
         """
         Verifica se a IA está pausada para este lead
@@ -429,5 +432,3 @@ class MessageProcessor:
         except Exception as e:
             logger.warning(f"⚠️  Erro ao verificar tags do lead {lead.id}: {e}")
             return False
-        
-        
