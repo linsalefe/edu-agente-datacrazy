@@ -108,8 +108,8 @@ class RAGLoader:
         """Carrega todos os arquivos de todas as categorias"""
         all_files = []
         
-        # Categorias padrão
-        categories = ['empresa', 'produtos', 'processos', 'faq']
+        # Categoria de cursos da UNOPAR
+        categories = ['cursos']
         
         for category in categories:
             logger.info(f"📂 Carregando categoria: {category}")

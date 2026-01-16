@@ -1,0 +1,118 @@
+# CURSOS DE TECNOLOGIA E COMPUTAÇÃO - UNOPAR
+
+---
+
+## Análise e Desenvolvimento de Sistemas
+Tipo: Tecnólogo | Modalidade: EAD, Presencial | Duração: 5 semestres
+Mensalidade: A partir de R$ 108,00
+
+O curso de Análise e Desenvolvimento de Sistemas forma profissionais capazes de projetar, desenvolver, testar e manter software em diferentes plataformas e contextos. Os estudantes aprendem linguagens de programação, engenharia de software, estruturas de dados e metodologias de desenvolvimento.
+Mercado de Trabalho: Desenvolvedores de software, analistas de sistemas, engenheiros de software e consultores de TI.
+
+---
+
+## Arquitetura de Dados
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 5 semestres
+Mensalidade: A partir de R$ 99,00
+
+O curso de Arquitetura de Dados aborda a organização, modelagem e gestão de dados em ambientes corporativos. Os estudantes aprendem sobre bancos de dados relacionais e não relacionais, fluxo de dados e governança.
+Mercado de Trabalho: Arquiteto de dados, analista de BI, engenheiro de dados ou consultor.
+
+---
+
+## Cibersegurança
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 5 semestres
+Mensalidade: A partir de R$ 128,00
+
+Prepara profissionais para proteger sistemas, redes e ativos digitais contra ameaças e ataques. Os alunos aprendem sobre proteção de sistemas, análise de riscos e criptografia.
+Mercado de Trabalho: Analista de segurança da informação, especialista em forense digital, consultor de segurança.
+
+---
+
+## Ciência da Computação
+Tipo: Bacharelado | Modalidade: EAD, Presencial | Duração: 8 semestres
+Mensalidade: A partir de R$ 142,99
+
+Formação sólida em fundamentos matemáticos e computacionais, algoritmos, inteligência artificial e desenvolvimento de sistemas complexos.
+Mercado de Trabalho: Desenvolvimento de software, engenharia de sistemas, inteligência artificial e pesquisa.
+
+---
+
+## Ciência de Dados
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 5 semestres
+Mensalidade: A partir de R$ 108,00
+
+Capacita na coleta, tratamento, análise e visualização de grandes volumes de dados. Ensina estatística aplicada, machine learning e Python.
+Mercado de Trabalho: Cientistas de dados, analistas de dados, consultores de analytics.
+
+---
+
+## Gestão da Tecnologia da Informação
+Tipo: Tecnólogo | Modalidade: EAD, Presencial | Duração: 5 semestres
+Mensalidade: A partir de R$ 108,00
+
+Prepara profissionais para liderar equipes e alinhar tecnologia aos objetivos de negócios. Foca em gestão de projetos e governança de TI.
+Mercado de Trabalho: Gestor de TI, coordenador de projetos, consultor em governança.
+
+---
+
+## Engenharia da Computação
+Tipo: Bacharelado | Modalidade: EAD, Presencial | Duração: 10 semestres
+Mensalidade: A partir de R$ 297,98
+
+Integra conhecimentos de engenharia elétrica e ciência da computação para projetar hardware e software. Abrange circuitos, arquiteturas de computadores, sistemas embarcados e robótica.
+Mercado de Trabalho: Engenheiros de computação, desenvolvedores de sistemas embarcados, projetistas de hardware e automação.
+
+---
+
+## Engenharia de Software
+Tipo: Bacharelado | Modalidade: EAD, Presencial | Duração: 8 semestres
+Mensalidade: A partir de R$ 157,99
+
+Foca no ciclo de vida de desenvolvimento de software, qualidade, testes e gestão de projetos de sistemas complexos.
+Mercado de Trabalho: Engenheiro de software, gerente de projetos ágeis, analista de QA.
+
+---
+
+## Desenvolvimento Mobile
+Tipo: Tecnólogo | Modalidade: EAD, Presencial | Duração: 5 semestres
+Mensalidade: A partir de R$ 143,42
+
+Forma desenvolvedores de aplicativos móveis (Android/iOS), focando em interfaces, usabilidade e programação nativa e híbrida.
+Mercado de Trabalho: Desenvolvedor mobile, startups de tecnologia e app studios.
+
+---
+
+## Desenvolvimento Web
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 4 semestres
+Mensalidade: A partir de R$ 159,00
+
+Focado na criação de sites e sistemas web. Abrange Front-end, Back-end e bancos de dados.
+Mercado de Trabalho: Desenvolvedor Full Stack, Web Designer, programador web.
+
+---
+
+## DevOps
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 4 semestres
+Mensalidade: A partir de R$ 128,00
+
+Integra o desenvolvimento de software com a operação de infraestrutura. Ensina automação, integração contínua (CI/CD), computação em nuvem e containers.
+Mercado de Trabalho: Engenheiro DevOps, SRE (Site Reliability Engineering) e administração de sistemas em nuvem.
+
+---
+
+## Jogos Digitais
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 5 semestres
+Mensalidade: A partir de R$ 126,42
+
+Aborda criação de games, roteiro, design de personagens e programação em engines como Unity.
+Mercado de Trabalho: Estúdios de games, jogos educativos, simulação e realidade virtual.
+
+---
+
+## Computação em Nuvem
+Tipo: Tecnólogo | Modalidade: EAD | Duração: 5 semestres
+Mensalidade: A partir de R$ 110,92
+
+Especializa na arquitetura, segurança e gestão de serviços em nuvem (Cloud Computing).
+Mercado de Trabalho: Arquiteto Cloud, analista de infraestrutura e DevOps.

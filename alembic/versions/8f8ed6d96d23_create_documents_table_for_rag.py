@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table('documents',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('content', sa.Text(), nullable=False),
-    sa.Column('embedding', pgvector.sqlalchemy.vector.VECTOR(dim=1536), nullable=True),
+    sa.Column('embedding', pgvector.sqlalchemy.Vector(dim=1536), nullable=True),
     sa.Column('meta', sa.JSON(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )

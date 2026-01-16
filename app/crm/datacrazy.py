@@ -151,21 +151,27 @@ class DataCrazyClient:
     
     def create_deal(self, lead_id: str, pipeline_id: str, stage_id: str, data: Dict) -> Dict:
         """
-        Cria um negócio para um lead
+        Cria um negócio (business) no DataCrazy
         
         Args:
-            lead_id: ID do lead
-            pipeline_id: ID do pipeline
-            stage_id: ID do estágio
-            data: Dados adicionais do negócio
+            lead_id: ID do lead no DataCrazy
+            pipeline_id: ID da pipeline (não usado, apenas compatibilidade)
+            stage_id: ID do estágio inicial
+            data: Dados adicionais (title, attendantId, etc)
         """
-        payload = {
-            "pipelineId": pipeline_id,
-            "stageId": stage_id,
-            **data
-        }
         logger.info(f"💼 Criando negócio para lead {lead_id}")
-        return self._make_request("POST", f"leads/{lead_id}/deals", data=payload)
+        
+        # Endpoint correto: POST /api/v1/businesses
+        payload = {
+            "leadId": lead_id,
+            "stageId": stage_id
+        }
+        
+        # Adiciona dados extras se fornecidos
+        if data:
+            payload.update(data)
+        
+        return self._make_request("POST", "businesses", data=payload)
     
     def update_deal(self, deal_id: str, data: Dict) -> Dict:
         """Atualiza um negócio"""
@@ -225,3 +231,48 @@ class DataCrazyClient:
         except Exception as e:
             logger.error(f"❌ Falha na conexão DataCrazy: {e}")
             return False
+    # ========== PIPELINES ==========
+    
+    def list_pipelines(self, take: int = 50, skip: int = 0) -> Dict:
+        """
+        Lista todas as pipelines
+        
+        Args:
+            take: Quantidade de resultados (padrão: 50)
+            skip: Pular N resultados (paginação)
+        
+        Returns:
+            Lista de pipelines
+        """
+        params = {
+            "take": take,
+            "skip": skip
+        }
+        logger.info(f"📊 Listando pipelines")
+        return self._make_request("GET", "pipelines", params=params)
+    
+    def get_pipeline(self, pipeline_id: str) -> Dict:
+        """
+        Busca uma pipeline específica
+        
+        Args:
+            pipeline_id: ID da pipeline
+        
+        Returns:
+            Dados da pipeline incluindo stages
+        """
+        logger.info(f"📊 Buscando pipeline {pipeline_id}")
+        return self._make_request("GET", f"pipelines/{pipeline_id}")
+    
+    def get_pipeline_stages(self, pipeline_id: str) -> Dict:
+        """
+        Busca os estágios de uma pipeline específica
+    
+        Args:
+        pipeline_id: ID da pipeline
+    
+        Returns:
+        Lista de estágios
+        """
+        logger.info(f"📊 Buscando estágios da pipeline {pipeline_id}")
+        return self._make_request("GET", f"pipelines/{pipeline_id}/stages")

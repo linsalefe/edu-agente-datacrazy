@@ -48,7 +48,12 @@ class MessageProcessor:
                 logger.info(f"⚠️  Conversa {conversation.id} está em handoff - ignorando")
                 return
             
-            # 3. Salva mensagem do usuário
+            # 3. Verifica se IA está pausada (tag IA_PAUSADA)
+            if self._is_ai_paused(conversation.lead):
+                logger.info(f"⏸️  IA pausada para lead {conversation.lead_id} - ignorando mensagem")
+                return
+            
+            # 4. Salva mensagem do usuário
             user_message = Message(
                 conversation_id=conversation.id,
                 role="user",
@@ -57,19 +62,19 @@ class MessageProcessor:
             self.db.add(user_message)
             self.db.commit()
             
-            # 4. Atualiza timestamp da conversa
+            # 5. Atualiza timestamp da conversa
             conversation.last_message_at = datetime.utcnow()
             self.db.commit()
             
-            # 5. Busca contexto RAG
+            # 6. Busca contexto RAG
             rag_query = RAGQuery()
             context = rag_query.build_context(text, top_k=4)
             logger.info(f"📚 Contexto RAG obtido: {len(context)} caracteres")
             
-            # 6. Busca histórico da conversa
+            # 7. Busca histórico da conversa
             history = self._get_conversation_history(conversation.id, limit=10)
             
-            # 7. Gera resposta da IA
+            # 8. Gera resposta da IA
             response, needs_handoff = self.response_gen.generate_response(
                 user_message=text,
                 history=history,
@@ -81,7 +86,7 @@ class MessageProcessor:
             logger.info(f"🤖 Resposta gerada: {response[:100]}...")
             logger.info(f"🤝 Necessita handoff: {needs_handoff}")
             
-            # 8. Verifica se precisa de handoff
+            # 9. Verifica se precisa de handoff
             if needs_handoff:
                 HandoffService.request_handoff(
                     conversation_id=conversation.id,
@@ -90,7 +95,7 @@ class MessageProcessor:
                 )
                 return
             
-            # 9. Salva resposta da IA
+            # 10. Salva resposta da IA
             assistant_message = Message(
                 conversation_id=conversation.id,
                 role="assistant",
@@ -99,11 +104,11 @@ class MessageProcessor:
             self.db.add(assistant_message)
             self.db.commit()
             
-            # 10. Envia resposta via WhatsApp
+            # 11. Envia resposta via WhatsApp
             self.zapi.send_text(phone, response)
             logger.info(f"✅ Resposta enviada para {phone}")
             
-            # 11. Sincroniza com CRM (async)
+            # 12. Sincroniza com CRM (async)
             try:
                 # Adiciona nota da interação
                 if conversation.lead:
@@ -114,7 +119,7 @@ class MessageProcessor:
             except Exception as e:
                 logger.warning(f"⚠️  Erro ao sincronizar com CRM: {e}")
             
-            # 12. Agenda follow-ups (apenas para novas conversas)
+            # 13. Agenda follow-ups (apenas para novas conversas)
             messages_count = self.db.query(Message).filter(
                 Message.conversation_id == conversation.id
             ).count()
@@ -163,7 +168,7 @@ class MessageProcessor:
         
         # Sincroniza lead com CRM
         try:
-            self.crm.sync_lead(lead.id)
+            self.crm.sync_lead_create(lead.id)
         except Exception as e:
             logger.warning(f"⚠️  Erro ao sincronizar lead com CRM: {e}")
         
@@ -207,3 +212,49 @@ class MessageProcessor:
             })
         
         return history
+    
+    def _is_ai_paused(self, lead: Lead) -> bool:
+        """
+        Verifica se a IA está pausada para este lead
+        Checa se o lead tem a tag IA_PAUSADA no DataCrazy
+    
+        Returns:
+            True se IA está pausada, False caso contrário
+        """
+        # Se lead não tem ID no DataCrazy, não está pausado
+        if not lead.datacrazy_id:
+            return False
+    
+        try:
+            # Busca dados do lead no DataCrazy
+            lead_data = self.crm.crm.get_lead(lead.datacrazy_id)
+            logger.info(f"🔍 Lead data recebido: {lead_data.keys()}")
+        
+            # Verifica se tem a tag IA_PAUSADA
+            tags = lead_data.get("tags", [])
+            logger.info(f"🏷️  Tags encontradas: {tags}")
+        
+            # Tags pode vir como lista ou objeto único
+            if isinstance(tags, list):
+                # Se é lista, iterar sobre as tags
+                for tag in tags:
+                    tag_name = tag.get("name", "")
+                    logger.info(f"🏷️  Verificando tag: {tag_name}")
+                    if tag_name == "IA_PAUSADA":
+                        logger.info(f"🔴 Tag IA_PAUSADA encontrada para lead {lead.id}")
+                        return True
+            elif isinstance(tags, dict):
+                # Se é objeto único
+                tag_name = tags.get("name", "")
+                logger.info(f"🏷️  Verificando tag: {tag_name}")
+                if tag_name == "IA_PAUSADA":
+                    logger.info(f"🔴 Tag IA_PAUSADA encontrada para lead {lead.id}")
+                    return True
+            
+            logger.info(f"✅ Lead {lead.id} sem tag IA_PAUSADA - IA ativa")
+            return False
+        
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao verificar tags do lead {lead.id}: {e}")
+            # Em caso de erro, não pausa (fail-safe)
+            return False
