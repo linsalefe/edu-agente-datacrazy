@@ -103,3 +103,4 @@ Obrigado pela paciência! 🙏
             
         except Exception as e:
             logger.error(f"❌ Erro ao notificar atendente: {e}")
+            

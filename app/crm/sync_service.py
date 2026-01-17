@@ -1,15 +1,30 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from loguru import logger
 import requests
 from app.config import settings
 from app.crm.datacrazy import DataCrazyClient
-from app.crm.stage_mapper import StageMapper
 from app.models.lead import Lead
-from app.models.conversation import Conversation
+from app.models.conversation import Conversation, ConversationStage
 
 
 class CRMSyncService:
     """Serviço de sincronização com DataCrazy CRM"""
+    
+    # ID da pipeline "IA - Bia" (fixo)
+    PIPELINE_ID = "89e78ad1-2aa9-46d2-b692-28b7e689692b"
+    
+    # Cache dos estágios da pipeline (carregado uma vez)
+    _stages_cache: Dict[str, str] = {}
+    
+    # Mapeamento: estágio interno → nome do estágio na pipeline
+    STAGE_MAPPING = {
+        "novo": "Entrada do Lead",
+        "atendimento": "Em conversa",
+        "qualificacao": "Lead Interessado",
+        "negociacao": "Lead Interessado",
+        "fechamento": "Fechamento",
+        "pos_venda": "Fechamento",
+    }
     
     def __init__(self, db):
         self.crm = DataCrazyClient(
@@ -17,6 +32,53 @@ class CRMSyncService:
             base_url=settings.DATACRAZY_BASE_URL
         )
         self.db = db
+        
+        # Carrega os estágios da pipeline no cache
+        if not CRMSyncService._stages_cache:
+            self._load_pipeline_stages()
+    
+    def _load_pipeline_stages(self):
+        """Carrega os estágios da pipeline no cache"""
+        try:
+            stages = self.crm.get_pipeline_stages(self.PIPELINE_ID)
+            
+            for stage in stages:
+                stage_name = stage.get("name", "")
+                stage_id = stage.get("id", "")
+                if stage_name and stage_id:
+                    CRMSyncService._stages_cache[stage_name] = stage_id
+                    logger.info(f"📍 Estágio carregado: {stage_name} → {stage_id}")
+            
+            logger.info(f"✅ {len(CRMSyncService._stages_cache)} estágios carregados no cache")
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao carregar estágios da pipeline: {e}")
+    
+    def _get_stage_id_by_name(self, stage_name: str) -> Optional[str]:
+        """Busca ID do estágio pelo nome"""
+        return CRMSyncService._stages_cache.get(stage_name)
+    
+    def _get_stage_id_for_internal_stage(self, internal_stage: str) -> Optional[str]:
+        """
+        Converte estágio interno do bot para ID do estágio na pipeline
+        
+        Args:
+            internal_stage: Estágio interno (novo, atendimento, qualificacao, fechamento)
+        
+        Returns:
+            ID do estágio na pipeline DataCrazy
+        """
+        pipeline_stage_name = self.STAGE_MAPPING.get(internal_stage)
+        if not pipeline_stage_name:
+            logger.warning(f"⚠️  Estágio interno '{internal_stage}' não mapeado")
+            return None
+        
+        stage_id = self._get_stage_id_by_name(pipeline_stage_name)
+        if not stage_id:
+            logger.warning(f"⚠️  Estágio '{pipeline_stage_name}' não encontrado na pipeline")
+            return None
+        
+        return stage_id
     
     # -------------------------
     # Helpers
@@ -97,43 +159,63 @@ class CRMSyncService:
         Retorna (pipeline_id, primeiro_stage_id) da pipeline 'IA - Bia'
     
         Returns:
-        (pipeline_id, stage_id) ou (None, None) se não encontrar
+            (pipeline_id, stage_id) ou (None, None) se não encontrar
         """
         try:
-            # ID fixo da pipeline "IA - Bia"
-            pipeline_id = "89e78ad1-2aa9-46d2-b692-28b7e689692b"
-        
-            # Buscar os estágios da pipeline
-            result = self.crm.get_pipeline_stages(pipeline_id)
-        
-            if not isinstance(result, dict):
-                logger.error("❌ Resposta inesperada ao buscar estágios")
-                return None, None
-        
-            # Buscar lista de estágios
-            stages = result.get("data", [])
-            if not isinstance(stages, list) or len(stages) == 0:
-                logger.error(f"❌ Pipeline sem estágios. Resposta: {result}")
-                return None, None
-        
-            # Pegar primeiro estágio
-            first_stage = stages[0]
-            stage_id = first_stage.get("id")
-        
+            pipeline_id = self.PIPELINE_ID
+            
+            # Buscar o primeiro estágio
+            first_stage_name = "Entrada do Lead"
+            stage_id = self._get_stage_id_by_name(first_stage_name)
+            
             if not stage_id:
-                logger.error("❌ Primeiro estágio sem ID")
-                return None, None
-        
-            logger.info(f"✅ Pipeline encontrada: {pipeline_id}, Estágio: {stage_id} ({first_stage.get('name')})")
+                # Fallback: pega o primeiro estágio disponível
+                if CRMSyncService._stages_cache:
+                    stage_id = list(CRMSyncService._stages_cache.values())[0]
+                else:
+                    logger.error("❌ Nenhum estágio encontrado na pipeline")
+                    return None, None
+            
+            logger.info(f"✅ Pipeline: {pipeline_id}, Estágio inicial: {stage_id}")
             return str(pipeline_id), str(stage_id)
     
         except Exception as e:
             logger.exception(f"❌ Erro ao buscar pipeline e estágio: {e}")
             return None, None
     
+    def _get_deal_id_for_lead(self, datacrazy_lead_id: str) -> Optional[str]:
+        """
+        Busca o ID do negócio (deal) associado ao lead
+        
+        Args:
+            datacrazy_lead_id: ID do lead no DataCrazy
+        
+        Returns:
+            ID do negócio ou None
+        """
+        try:
+            result = self.crm.list_deals_by_lead(datacrazy_lead_id)
+            
+            deals = []
+            if isinstance(result, dict):
+                deals = result.get("data", [])
+            elif isinstance(result, list):
+                deals = result
+            
+            if deals and len(deals) > 0:
+                # Retorna o primeiro negócio encontrado
+                deal = deals[0]
+                deal_id = deal.get("id")
+                if deal_id:
+                    return str(deal_id)
+            
+            return None
+        
+        except Exception as e:
+            logger.warning(f"⚠️  Erro ao buscar negócio do lead {datacrazy_lead_id}: {e}")
+            return None
     
-    
-    def _create_deal_for_lead(self, datacrazy_lead_id: str, lead_name: str) -> bool:
+    def _create_deal_for_lead(self, datacrazy_lead_id: str, lead_name: str) -> Optional[str]:
         """
         Cria um deal para o lead na pipeline 'IA - Bia'
         
@@ -142,7 +224,7 @@ class CRMSyncService:
             lead_name: Nome do lead (para o título do deal)
         
         Returns:
-            True se criou com sucesso, False caso contrário
+            ID do deal criado ou None
         """
         try:
             # Buscar pipeline e estágio
@@ -150,13 +232,13 @@ class CRMSyncService:
             
             if not pipeline_id or not stage_id:
                 logger.warning(f"⚠️  Não foi possível criar deal - pipeline/stage não encontrados")
-                return False
+                return None
             
             # Criar deal
             deal_data = {
                 "title": f"Atendimento IA - {lead_name}",
-                "value": 0,  # Valor inicial
-                "probability": 25  # Probabilidade inicial (25%)
+                "value": 0,
+                "probability": 25
             }
             
             result = self.crm.create_deal(
@@ -167,14 +249,68 @@ class CRMSyncService:
             )
             
             if result:
-                logger.info(f"💼 Deal criado com sucesso para lead {datacrazy_lead_id}")
-                return True
+                deal_id = self._extract_datacrazy_id(result)
+                logger.info(f"💼 Deal criado com sucesso: {deal_id}")
+                return deal_id
             
             logger.error(f"❌ Falha ao criar deal para lead {datacrazy_lead_id}")
-            return False
+            return None
         
         except Exception as e:
             logger.exception(f"❌ Erro ao criar deal para lead {datacrazy_lead_id}: {e}")
+            return None
+    
+    # -------------------------
+    # Movimentação na Pipeline
+    # -------------------------
+    
+    def move_lead_in_pipeline(self, lead_id: int, new_stage: str) -> bool:
+        """
+        Move o card do lead para outro estágio na pipeline do DataCrazy
+        
+        Args:
+            lead_id: ID do lead no banco local
+            new_stage: Novo estágio interno (novo, atendimento, qualificacao, fechamento)
+        
+        Returns:
+            True se moveu com sucesso
+        """
+        try:
+            # 1. Garantir que o lead tem datacrazy_id
+            datacrazy_id = self._ensure_datacrazy_id(lead_id)
+            if not datacrazy_id:
+                logger.warning(f"⚠️  Lead {lead_id} sem datacrazy_id - não pode mover na pipeline")
+                return False
+            
+            # 2. Buscar o deal associado ao lead
+            deal_id = self._get_deal_id_for_lead(datacrazy_id)
+            
+            if not deal_id:
+                logger.warning(f"⚠️  Lead {lead_id} sem deal - criando...")
+                lead = self._get_lead(lead_id)
+                deal_id = self._create_deal_for_lead(datacrazy_id, lead.name or "Lead")
+                
+                if not deal_id:
+                    logger.error(f"❌ Não foi possível criar deal para lead {lead_id}")
+                    return False
+            
+            # 3. Converter estágio interno para ID do estágio na pipeline
+            stage_id = self._get_stage_id_for_internal_stage(new_stage)
+            
+            if not stage_id:
+                logger.warning(f"⚠️  Não foi possível mapear estágio '{new_stage}' para pipeline")
+                return False
+            
+            # 4. Mover o deal para o novo estágio
+            self.crm.move_deal_to_stage(deal_id, stage_id)
+            
+            pipeline_stage_name = self.STAGE_MAPPING.get(new_stage, new_stage)
+            logger.info(f"✅ Lead {lead_id} movido para '{pipeline_stage_name}' na pipeline")
+            
+            return True
+        
+        except Exception as e:
+            logger.exception(f"❌ Erro ao mover lead {lead_id} na pipeline: {e}")
             return False
     
     # -------------------------
@@ -214,7 +350,7 @@ class CRMSyncService:
                 self.db.commit()
                 logger.info(f"✅ Lead {lead_id} criado no DataCrazy: {datacrazy_id}")
                 
-                # 🆕 CRIAR DEAL AUTOMATICAMENTE
+                # Criar deal automaticamente
                 self._create_deal_for_lead(datacrazy_id, lead.name or "Lead sem nome")
                 
                 return True
@@ -248,7 +384,7 @@ class CRMSyncService:
                     self.db.commit()
                     logger.info(f"✅ Lead {lead_id} já existia. ID recuperado e salvo: {existing_id}")
                     
-                    # 🆕 CRIAR DEAL PARA LEAD EXISTENTE TAMBÉM
+                    # Criar deal para lead existente também
                     self._create_deal_for_lead(existing_id, lead.name or "Lead sem nome")
                     
                     return True
@@ -292,6 +428,9 @@ class CRMSyncService:
     # -------------------------
     
     def sync_stage_change(self, conversation_id: int) -> bool:
+        """
+        Sincroniza mudança de estágio da conversa com a pipeline do DataCrazy
+        """
         try:
             conversation = self.db.query(Conversation).filter(
                 Conversation.id == conversation_id
@@ -306,28 +445,9 @@ class CRMSyncService:
                 logger.warning(f"⚠️  Conversa {conversation_id} sem lead_id")
                 return False
             
-            datacrazy_id = self._ensure_datacrazy_id(lead_id)
-            if not datacrazy_id:
-                return False
-            
-            _stage_id = StageMapper.map_stage_to_datacrazy(conversation.current_stage.value)
-            _pipeline_id = StageMapper.get_pipeline_id()
-            
-            update_data = {
-                "stage": conversation.current_stage.value,
-                "custom_fields": {
-                    "stage_interno": conversation.current_stage.value,
-                    "status_conversa": conversation.status.value,
-                }
-            }
-            
-            result = self.crm.update_lead(datacrazy_id, update_data)
-            if result:
-                logger.info(f"✅ Estágio sincronizado: Conversa {conversation_id}")
-                return True
-            
-            logger.error(f"❌ Falha ao sincronizar estágio: Conversa {conversation_id}")
-            return False
+            # Mover o card na pipeline
+            new_stage = conversation.current_stage.value
+            return self.move_lead_in_pipeline(lead_id, new_stage)
         
         except Exception as e:
             logger.exception(f"❌ Erro ao sincronizar estágio: {e}")

@@ -5,7 +5,7 @@ Documentação: https://datacrazy.mintlify.app/
 """
 
 import requests
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from loguru import logger
 import time
 
@@ -43,6 +43,8 @@ class DataCrazyClient:
                     response = self.session.post(url, json=data, timeout=10)
                 elif method == "PATCH":
                     response = self.session.patch(url, json=data, timeout=10)
+                elif method == "PUT":
+                    response = self.session.put(url, json=data, timeout=10)
                 elif method == "DELETE":
                     response = self.session.delete(url, timeout=10)
                 else:
@@ -147,15 +149,16 @@ class DataCrazyClient:
     
         logger.info(f"🔍 Buscando leads: {search}")
         return self._make_request("GET", "leads", params=params)
-    # ========== NEGÓCIOS ==========
     
-    def create_deal(self, lead_id: str, pipeline_id: str, stage_id: str, data: Dict) -> Dict:
+    # ========== NEGÓCIOS (BUSINESSES) ==========
+    
+    def create_deal(self, lead_id: str, pipeline_id: str, stage_id: str, data: Dict = None) -> Dict:
         """
         Cria um negócio (business) no DataCrazy
         
         Args:
             lead_id: ID do lead no DataCrazy
-            pipeline_id: ID da pipeline (não usado, apenas compatibilidade)
+            pipeline_id: ID da pipeline (não usado diretamente, apenas compatibilidade)
             stage_id: ID do estágio inicial
             data: Dados adicionais (title, attendantId, etc)
         """
@@ -176,7 +179,41 @@ class DataCrazyClient:
     def update_deal(self, deal_id: str, data: Dict) -> Dict:
         """Atualiza um negócio"""
         logger.info(f"🔄 Atualizando negócio {deal_id}")
-        return self._make_request("PATCH", f"deals/{deal_id}", data=data)
+        return self._make_request("PATCH", f"businesses/{deal_id}", data=data)
+    
+    def move_deal_to_stage(self, deal_id: str, stage_id: str) -> Dict:
+        """
+        Move um negócio para outro estágio da pipeline
+        
+        Args:
+            deal_id: ID do negócio (business)
+            stage_id: ID do novo estágio
+        
+        Returns:
+            Dados do negócio atualizado
+        """
+        logger.info(f"📦 Movendo negócio {deal_id} para estágio {stage_id}")
+        
+        data = {"stageId": stage_id}
+        return self._make_request("PATCH", f"businesses/{deal_id}", data=data)
+    
+    def get_deal(self, deal_id: str) -> Dict:
+        """Busca informações de um negócio"""
+        return self._make_request("GET", f"businesses/{deal_id}")
+    
+    def list_deals_by_lead(self, lead_id: str) -> Dict:
+        """
+        Lista negócios de um lead específico
+        
+        Args:
+            lead_id: ID do lead
+        
+        Returns:
+            Lista de negócios do lead
+        """
+        logger.info(f"📋 Buscando negócios do lead {lead_id}")
+        params = {"leadId": lead_id}
+        return self._make_request("GET", "businesses", params=params)
     
     # ========== ANOTAÇÕES ==========
     
@@ -220,17 +257,6 @@ class DataCrazyClient:
         data = {"tags": [{"id": tag_id} for tag_id in tag_ids]}
         return self._make_request("POST", f"leads/{lead_id}/tags", data=data)
     
-    # ========== HEALTH CHECK ==========
-    
-    def health_check(self) -> bool:
-        """Verifica se a conexão com a API está funcionando"""
-        try:
-            self.list_leads(params={"page": 1, "perPage": 1})
-            logger.info("✅ Conexão DataCrazy OK")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Falha na conexão DataCrazy: {e}")
-            return False
     # ========== PIPELINES ==========
     
     def list_pipelines(self, take: int = 50, skip: int = 0) -> Dict:
@@ -264,15 +290,32 @@ class DataCrazyClient:
         logger.info(f"📊 Buscando pipeline {pipeline_id}")
         return self._make_request("GET", f"pipelines/{pipeline_id}")
     
-    def get_pipeline_stages(self, pipeline_id: str) -> Dict:
+    def get_pipeline_stages(self, pipeline_id: str) -> List[Dict]:
         """
         Busca os estágios de uma pipeline específica
     
         Args:
-        pipeline_id: ID da pipeline
+            pipeline_id: ID da pipeline
     
         Returns:
-        Lista de estágios
+            Lista de estágios
         """
         logger.info(f"📊 Buscando estágios da pipeline {pipeline_id}")
-        return self._make_request("GET", f"pipelines/{pipeline_id}/stages")
+        result = self._make_request("GET", f"pipelines/{pipeline_id}/stages")
+        
+        # Retorna a lista de stages
+        if isinstance(result, dict):
+            return result.get("data", [])
+        return result
+    
+    # ========== HEALTH CHECK ==========
+    
+    def health_check(self) -> bool:
+        """Verifica se a conexão com a API está funcionando"""
+        try:
+            self.list_leads(params={"take": 1, "skip": 0})
+            logger.info("✅ Conexão DataCrazy OK")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Falha na conexão DataCrazy: {e}")
+            return False

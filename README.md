@@ -246,5 +246,5 @@ O bot transfere automaticamente quando:
 
 ---
 
-**Desenvolvido por:** Élefe  
+**Desenvolvido por:** Álefe  
 **Versão:** 1.1.0
