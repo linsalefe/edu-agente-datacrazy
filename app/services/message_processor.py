@@ -3,6 +3,7 @@ Processador de Mensagens
 Orquestra todo o fluxo de processamento de mensagens
 """
 
+import re
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
@@ -66,7 +67,7 @@ class MessageProcessor:
             self.db.add(user_message)
             self.db.commit()
 
-            # 5. Extrair e salvar informações do usuário (course/city/education/motivation)
+            # 5. Extrair e salvar informações do usuário (course/city/education/motivation/cpf/email/etc)
             self._extract_and_save_info(text, conversation.lead)
 
             # 6. Atualiza timestamp da conversa
@@ -256,6 +257,7 @@ class MessageProcessor:
     def _extract_and_save_info(self, text: str, lead: Lead):
         """Extrai informações da mensagem do usuário e salva no perfil (em profile.qualification)."""
         text_lower = (text or "").lower().strip()
+        text_original = (text or "").strip()
 
         profile = lead.profile or {}
         if not isinstance(profile, dict):
@@ -266,63 +268,112 @@ class MessageProcessor:
         if not isinstance(qual, dict):
             qual = {}
             # migra campos flat antigos
-            for k in ["course", "city", "education_level", "motivation", "full_name", "has_high_school"]:
+            for k in ["course", "city", "education_level", "motivation", "full_name", "has_high_school", "cpf", "email", "birth_date", "cep"]:
                 if k in profile and k != "qualification":
                     qual[k] = profile.get(k)
             profile["qualification"] = qual
 
         updated = False
 
-        # Detectar curso
+        # ========== DETECTAR CPF ==========
+        # Formatos: 123.456.789-00 ou 12345678900
+        cpf_pattern = r'\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b'
+        cpf_match = re.search(cpf_pattern, text_original)
+        if cpf_match and not qual.get("cpf"):
+            cpf_raw = cpf_match.group(1)
+            # Remove pontuação para validar quantidade de dígitos
+            cpf_digits = re.sub(r'\D', '', cpf_raw)
+            if len(cpf_digits) == 11:
+                qual["cpf"] = cpf_raw
+                updated = True
+                logger.info(f"🆔 CPF detectado: {cpf_raw}")
+
+        # ========== DETECTAR E-MAIL ==========
+        email_pattern = r'\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b'
+        email_match = re.search(email_pattern, text_original)
+        if email_match and not qual.get("email"):
+            email_found = email_match.group(1)
+            qual["email"] = email_found
+            # Também atualiza o campo email do lead
+            if not lead.email:
+                lead.email = email_found
+            updated = True
+            logger.info(f"📧 E-mail detectado: {email_found}")
+
+        # ========== DETECTAR DATA DE NASCIMENTO ==========
+        # Formatos: dd/mm/aaaa, dd-mm-aaaa, dd.mm.aaaa
+        date_pattern = r'\b(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})\b'
+        date_match = re.search(date_pattern, text_original)
+        if date_match and not qual.get("birth_date"):
+            date_raw = date_match.group(1)
+            qual["birth_date"] = date_raw
+            updated = True
+            logger.info(f"🎂 Data de nascimento detectada: {date_raw}")
+
+        # ========== DETECTAR CEP ==========
+        # Formatos: 12345-678 ou 12345678
+        cep_pattern = r'\b(\d{5}-?\d{3})\b'
+        cep_match = re.search(cep_pattern, text_original)
+        if cep_match and not qual.get("cep"):
+            cep_raw = cep_match.group(1)
+            qual["cep"] = cep_raw
+            updated = True
+            logger.info(f"📍 CEP detectado: {cep_raw}")
+
+        # ========== DETECTAR CURSO ==========
         cursos = [
             "administração", "administracao", "pedagogia", "enfermagem",
             "engenharia", "direito", "psicologia", "ti", "tecnologia",
             "marketing", "gestão", "gestao", "rh", "recursos humanos",
             "adm", "contabilidade", "logistica", "logística"
         ]
-        for curso in cursos:
-            if curso in text_lower:
-                qual["course"] = curso.title()
-                updated = True
-                logger.info(f"📚 Curso detectado: {curso}")
-                break
+        if not qual.get("course"):
+            for curso in cursos:
+                if curso in text_lower:
+                    qual["course"] = curso.title()
+                    updated = True
+                    logger.info(f"📚 Curso detectado: {curso}")
+                    break
 
-        # Detectar cidade
-        if "arcos" in text_lower:
-            qual["city"] = "Arcos"
-            updated = True
-            logger.info("📍 Cidade detectada: Arcos")
-        elif "lagoa" in text_lower or "prata" in text_lower:
-            qual["city"] = "Lagoa da Prata"
-            updated = True
-            logger.info("📍 Cidade detectada: Lagoa da Prata")
-        elif "formiga" in text_lower:
-            qual["city"] = "Formiga"
-            updated = True
-            logger.info("📍 Cidade detectada: Formiga")
-
-        # Detectar escolaridade
-        if text_lower in ["sim", "s", "já", "ja", "tenho", "concluí", "conclui", "terminei"]:
-            qual["education_level"] = "Ensino Médio Completo"
-            updated = True
-            logger.info("✅ Escolaridade detectada: Ensino Médio Completo")
-        elif any(palavra in text_lower for palavra in ["sim", "conclu", "tenho", "já fiz", "ja fiz", "terminei"]):
-            if any(p in text_lower for p in ["superior", "graduação", "graduacao", "faculdade"]):
-                qual["education_level"] = "Ensino Superior Completo"
+        # ========== DETECTAR CIDADE ==========
+        if not qual.get("city"):
+            if "arcos" in text_lower:
+                qual["city"] = "Arcos"
                 updated = True
-                logger.info("✅ Escolaridade detectada: Ensino Superior Completo")
-            elif any(p in text_lower for p in ["médio", "medio", "ensino", "colegial"]):
+                logger.info("📍 Cidade detectada: Arcos")
+            elif "lagoa" in text_lower or "prata" in text_lower:
+                qual["city"] = "Lagoa da Prata"
+                updated = True
+                logger.info("📍 Cidade detectada: Lagoa da Prata")
+            elif "formiga" in text_lower:
+                qual["city"] = "Formiga"
+                updated = True
+                logger.info("📍 Cidade detectada: Formiga")
+
+        # ========== DETECTAR ESCOLARIDADE ==========
+        if not qual.get("education_level"):
+            if text_lower in ["sim", "s", "já", "ja", "tenho", "concluí", "conclui", "terminei"]:
                 qual["education_level"] = "Ensino Médio Completo"
                 updated = True
                 logger.info("✅ Escolaridade detectada: Ensino Médio Completo")
+            elif any(palavra in text_lower for palavra in ["sim", "conclu", "tenho", "já fiz", "ja fiz", "terminei"]):
+                if any(p in text_lower for p in ["superior", "graduação", "graduacao", "faculdade"]):
+                    qual["education_level"] = "Ensino Superior Completo"
+                    updated = True
+                    logger.info("✅ Escolaridade detectada: Ensino Superior Completo")
+                elif any(p in text_lower for p in ["médio", "medio", "ensino", "colegial"]):
+                    qual["education_level"] = "Ensino Médio Completo"
+                    updated = True
+                    logger.info("✅ Escolaridade detectada: Ensino Médio Completo")
 
-        # Detectar motivação
-        if any(palavra in text_lower for palavra in ["empresa", "negócio", "negocio", "trabalho", "carreira", "dono", "empresário", "empresario"]):
-            qual["motivation"] = text[:200]
-            updated = True
-            logger.info(f"💼 Motivação detectada: {text[:50]}...")
+        # ========== DETECTAR MOTIVAÇÃO ==========
+        if not qual.get("motivation"):
+            if any(palavra in text_lower for palavra in ["empresa", "negócio", "negocio", "trabalho", "carreira", "dono", "empresário", "empresario"]):
+                qual["motivation"] = text[:200]
+                updated = True
+                logger.info(f"💼 Motivação detectada: {text[:50]}...")
 
-        # Detectar nome completo (se o lead está como "Cliente")
+        # ========== DETECTAR NOME COMPLETO ==========
         if (not lead.name or lead.name == "Cliente") and len(text.split()) >= 2:
             words = text.split()
             if len(words[0]) > 2 and not any(palavra in text_lower for palavra in ["ola", "olá", "bom", "dia", "tenho", "quero", "sim", "não", "nao"]):

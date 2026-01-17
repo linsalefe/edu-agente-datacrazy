@@ -63,6 +63,7 @@ class PromptBuilder:
     def _build_lead_data_block(self, lead_data: Optional[Dict]) -> str:
         """
         Constrói bloco explícito de dados do lead com regra forte.
+        Inclui todos os campos necessários para fechamento.
         """
         block = """
 ═══════════════════════════════════════════════════════════════════════
@@ -75,6 +76,7 @@ class PromptBuilder:
         else:
             name = lead_data.get("name", "")
             phone = lead_data.get("phone", "")
+            lead_email = lead_data.get("email", "")
             
             profile = lead_data.get("profile") or {}
             qual = {}
@@ -87,11 +89,13 @@ class PromptBuilder:
             dados_coletados = []
             dados_faltantes = []
             
+            # ===== DADOS BÁSICOS =====
             if name and name != "Cliente":
                 dados_coletados.append(f"✅ Nome: {name}")
             else:
-                dados_faltantes.append("❌ Nome: não coletado")
+                dados_faltantes.append("❌ Nome completo: não coletado")
             
+            # ===== DADOS DE INTERESSE =====
             course = qual.get("course")
             if course:
                 dados_coletados.append(f"✅ Curso de interesse: {course}")
@@ -119,6 +123,32 @@ class PromptBuilder:
             else:
                 dados_faltantes.append("❌ Motivação: não coletado")
             
+            # ===== DADOS PARA MATRÍCULA (FECHAMENTO) =====
+            cpf = qual.get("cpf")
+            if cpf:
+                dados_coletados.append(f"✅ CPF: {cpf}")
+            else:
+                dados_faltantes.append("❌ CPF: não coletado")
+            
+            # Email pode estar no lead ou no qualification
+            email = qual.get("email") or lead_email
+            if email:
+                dados_coletados.append(f"✅ E-mail: {email}")
+            else:
+                dados_faltantes.append("❌ E-mail: não coletado")
+            
+            birth_date = qual.get("birth_date")
+            if birth_date:
+                dados_coletados.append(f"✅ Data de nascimento: {birth_date}")
+            else:
+                dados_faltantes.append("❌ Data de nascimento: não coletado")
+            
+            cep = qual.get("cep")
+            if cep:
+                dados_coletados.append(f"✅ CEP: {cep}")
+            else:
+                dados_faltantes.append("❌ CEP: não coletado")
+            
             if dados_coletados:
                 block += "\n🟢 JÁ COLETADOS (NÃO PERGUNTE):\n"
                 block += "\n".join(dados_coletados)
@@ -134,7 +164,8 @@ class PromptBuilder:
 ⚠️  REGRA OBRIGATÓRIA:
 - NUNCA pergunte o que já está com ✅
 - Pergunte SOMENTE o que está com ❌ (um por vez)
-- Prioridade: 1º Curso → 2º Cidade → 3º Escolaridade → 4º Motivação
+- PRIORIDADE QUALIFICAÇÃO: 1º Curso → 2º Cidade → 3º Escolaridade → 4º Motivação
+- PRIORIDADE FECHAMENTO: 1º CPF → 2º E-mail → 3º Data nascimento → 4º CEP
 ═══════════════════════════════════════════════════════════════════════
 """
         return block
@@ -170,6 +201,10 @@ class PromptBuilder:
         education = (qual.get("education_level") or "").strip()
         has_hs = qual.get("has_high_school")
         motivation = (qual.get("motivation") or "").strip()
+        cpf = (qual.get("cpf") or "").strip()
+        qual_email = (qual.get("email") or "").strip()
+        birth_date = (qual.get("birth_date") or "").strip()
+        cep = (qual.get("cep") or "").strip()
 
         if course:
             parts.append(f"Curso de interesse: {course}")
@@ -181,6 +216,14 @@ class PromptBuilder:
             parts.append("Ensino médio: Concluído")
         if motivation:
             parts.append(f"Motivação: {motivation[:100]}")
+        if cpf:
+            parts.append(f"CPF: {cpf}")
+        if qual_email and qual_email != email:
+            parts.append(f"E-mail: {qual_email}")
+        if birth_date:
+            parts.append(f"Data de nascimento: {birth_date}")
+        if cep:
+            parts.append(f"CEP: {cep}")
 
         return "\n".join(parts) if parts else "Informações básicas do lead"
 
