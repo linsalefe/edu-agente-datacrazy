@@ -308,6 +308,35 @@ class DataCrazyClient:
             return result.get("data", [])
         return result
     
+    # ========== CONVERSAS ==========
+    
+    def send_message(self, conversation_id: str, message: str) -> Dict:
+        """
+        Envia mensagem para uma conversa existente no DataCrazy
+        
+        Docs: https://datacrazy.mintlify.app/api-reference/conversas/enviar-mensagem-para-uma-conversa
+        
+        Args:
+            conversation_id: ID da conversa no DataCrazy
+            message: Texto da mensagem
+        
+        Returns:
+            Resposta da API
+        """
+        data = {
+            "message": message
+        }
+        logger.info(f"📤 Enviando mensagem para conversa {conversation_id}")
+        return self._make_request("POST", f"conversations/{conversation_id}/messages", data=data)
+    
+    def get_conversation(self, conversation_id: str) -> Dict:
+        """Busca uma conversa por ID"""
+        return self._make_request("GET", f"conversations/{conversation_id}")
+    
+    def list_conversations(self, params: Optional[Dict] = None) -> Dict:
+        """Lista conversas com filtros opcionais"""
+        return self._make_request("GET", "conversations", params=params)
+    
     # ========== HEALTH CHECK ==========
     
     def health_check(self) -> bool:

@@ -95,8 +95,12 @@ async def health_detailed():
     return health_status
 
 
+# ==========================================
+# WEBHOOK Z-API (ORIGINAL)
+# ==========================================
+
 async def process_message_background(phone: str, text: str, name: str):
-    """Processa mensagem em background"""
+    """Processa mensagem em background (Z-API)"""
     db = next(get_db())
     try:
         processor = MessageProcessor(db)
@@ -114,7 +118,7 @@ async def webhook_receiver(request: Request, background_tasks: BackgroundTasks):
         payload = await request.json()
         
         # Log do webhook recebido
-        logger.info(f"📥 Webhook recebido: {payload.get('event', 'unknown')}")
+        logger.info(f"📥 Webhook Z-API recebido: {payload.get('event', 'unknown')}")
         
         # Extrair dados principais
         phone = payload.get('phone')
@@ -142,5 +146,71 @@ async def webhook_receiver(request: Request, background_tasks: BackgroundTasks):
         return {"status": "received"}
         
     except Exception as e:
-        logger.error(f"❌ Erro ao processar webhook: {e}")
+        logger.error(f"❌ Erro ao processar webhook Z-API: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# ==========================================
+# WEBHOOK DATACRAZY (NOVO)
+# ==========================================
+
+async def process_message_background_datacrazy(
+    phone: str, 
+    text: str, 
+    name: str,
+    conversation_id: str,
+    lead_id: str
+):
+    """Processa mensagem do DataCrazy em background"""
+    db = next(get_db())
+    try:
+        processor = MessageProcessor(db)
+        await processor.process_message_datacrazy(
+            phone=phone, 
+            text=text, 
+            name=name,
+            datacrazy_conversation_id=conversation_id,
+            datacrazy_lead_id=lead_id
+        )
+    finally:
+        db.close()
+
+
+@app.post("/webhook/datacrazy")
+async def webhook_datacrazy(request: Request, background_tasks: BackgroundTasks):
+    """
+    Recebe webhooks do DataCrazy (automação de mensagem recebida)
+    """
+    try:
+        payload = await request.json()
+        
+        logger.info(f"📥 Webhook DataCrazy recebido")
+        
+        # Extrair dados do payload DataCrazy
+        phone = payload.get('phone')
+        text = payload.get('message', '')
+        sender_name = payload.get('name', '')
+        conversation_id = payload.get('conversationId')
+        lead_id = payload.get('leadId')
+        
+        if not phone or not text:
+            logger.warning("⚠️  Webhook DataCrazy sem phone ou texto")
+            return {"status": "ignored", "reason": "missing_fields"}
+        
+        logger.info(f"💬 Nova mensagem DataCrazy de {sender_name} ({phone}): {text[:50]}...")
+        
+        # Processar mensagem em background (passa conversation_id)
+        background_tasks.add_task(
+            process_message_background_datacrazy, 
+            phone, 
+            text, 
+            sender_name,
+            conversation_id,
+            lead_id
+        )
+        
+        return {"status": "received"}
+        
+    except Exception as e:
+        logger.error(f"❌ Erro ao processar webhook DataCrazy: {e}")
         return {"status": "error", "message": str(e)}

@@ -31,9 +31,166 @@ class MessageProcessor:
         self.crm = CRMSyncService(db)
         self.response_gen = ResponseGenerator()
 
+    # ==========================================
+    # 🆕 PROCESS MESSAGE VIA DATACRAZY (NOVO!)
+    # ==========================================
+
+    async def process_message_datacrazy(
+        self, 
+        phone: str, 
+        text: str, 
+        name: str = None,
+        datacrazy_conversation_id: str = None,
+        datacrazy_lead_id: str = None
+    ):
+        """
+        Processa mensagem recebida via DataCrazy e responde via API DataCrazy
+        (para as conversas aparecerem no CRM)
+
+        Args:
+            phone: Telefone do cliente
+            text: Texto da mensagem
+            name: Nome do cliente (opcional)
+            datacrazy_conversation_id: ID da conversa no DataCrazy
+            datacrazy_lead_id: ID do lead no DataCrazy
+        """
+        logger.info(f"📱 Processando mensagem DataCrazy de {phone}")
+        logger.info(f"   conversation_id: {datacrazy_conversation_id}")
+        logger.info(f"   lead_id: {datacrazy_lead_id}")
+
+        try:
+            # 1. Get/Create Conversation
+            conversation = self._get_or_create_conversation(phone, name)
+
+            # 2. Verifica se está em handoff
+            if conversation.status == ConversationStatus.handoff:
+                logger.info(f"⚠️  Conversa {conversation.id} está em handoff - ignorando")
+                return
+
+            # 3. Verifica se IA está pausada (tag IA_PAUSADA)
+            if self._is_ai_paused(conversation.lead):
+                logger.info(f"⏸️  IA pausada para lead {conversation.lead_id} - ignorando mensagem")
+                return
+
+            # 4. Salva mensagem do usuário
+            user_message = Message(
+                conversation_id=conversation.id,
+                role="user",
+                content=text,
+            )
+            self.db.add(user_message)
+            self.db.commit()
+
+            # 5. Extrair e salvar informações do usuário
+            dados_extraidos = self._extract_and_save_info(text, conversation.lead)
+
+            # 6. Atualiza timestamp da conversa
+            conversation.last_message_at = datetime.utcnow()
+            self.db.commit()
+
+            # 7. Busca contexto RAG
+            rag_query = RAGQuery()
+            context = rag_query.build_context(text, top_k=4)
+            logger.info(f"📚 Contexto RAG obtido: {len(context)} caracteres")
+
+            # 8. Busca histórico da conversa
+            history = self._get_conversation_history(conversation.id, limit=10)
+
+            # 9. Recarrega o lead do banco para garantir dados atualizados
+            self.db.refresh(conversation.lead)
+            
+            # 10. Monta payload completo do lead para o LLM
+            llm_lead_data = self._build_llm_lead_data(conversation)
+
+            # 11. Gera resposta da IA
+            response, needs_handoff = self.response_gen.generate_response(
+                user_message=text,
+                history=history,
+                stage=conversation.current_stage.value,
+                lead_data=llm_lead_data,
+                context=context,
+            )
+
+            logger.info(f"🤖 Resposta gerada: {response[:100]}...")
+            logger.info(f"🤝 Necessita handoff: {needs_handoff}")
+
+            # 12. Verifica se precisa de handoff
+            if needs_handoff:
+                HandoffService.request_handoff(
+                    conversation_id=conversation.id,
+                    reason="IA solicitou transferência para humano",
+                    db=self.db,
+                )
+                return
+
+            # 13. Salva resposta da IA
+            assistant_message = Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content=response,
+            )
+            self.db.add(assistant_message)
+            self.db.commit()
+
+            # 14. Verificar se deve avançar stage
+            old_stage = conversation.current_stage.value
+            new_stage = self._should_advance_stage(conversation, llm_lead_data)
+            
+            if new_stage:
+                conversation.current_stage = ConversationStage[new_stage]
+                self.db.commit()
+                logger.info(f"📊 Stage avançado: {old_stage} → {new_stage}")
+                
+                try:
+                    self._add_stage_change_note(conversation.lead_id, old_stage, new_stage, llm_lead_data)
+                except Exception as e:
+                    logger.warning(f"⚠️  Erro ao adicionar nota de estágio: {e}")
+
+            # 15. 🆕 ENVIA RESPOSTA VIA DATACRAZY (para aparecer nas conversas!)
+            if datacrazy_conversation_id:
+                success = self.crm.send_message_via_crm(datacrazy_conversation_id, response)
+                if success:
+                    logger.info(f"✅ Resposta enviada via DataCrazy para {phone}")
+                else:
+                    # Fallback para Z-API se falhar
+                    logger.warning("⚠️  Falha DataCrazy, usando Z-API como fallback")
+                    self.zapi.send_text(phone, response)
+            else:
+                # Sem conversation_id, usa Z-API direto
+                logger.warning("⚠️  Sem datacrazy_conversation_id, usando Z-API")
+                self.zapi.send_text(phone, response)
+
+            # 16. Sincroniza com CRM - Nota da conversa
+            try:
+                if conversation.lead and dados_extraidos:
+                    self._add_data_collected_note(conversation.lead_id, dados_extraidos)
+            except Exception as e:
+                logger.warning(f"⚠️  Erro ao adicionar nota no CRM: {e}")
+
+            # 17. Agenda follow-ups (apenas para novas conversas)
+            messages_count = (
+                self.db.query(Message)
+                .filter(Message.conversation_id == conversation.id)
+                .count()
+            )
+
+            if messages_count == 2:
+                FollowupScheduler.schedule_followups(conversation.id, self.db)
+                logger.info(f"📅 Follow-ups agendados para conversa {conversation.id}")
+
+            logger.info("✅ Mensagem DataCrazy processada com sucesso")
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao processar mensagem DataCrazy: {e}")
+            raise
+
+    # ==========================================
+    # PROCESS MESSAGE ORIGINAL (Z-API)
+    # ==========================================
+
     async def process_message(self, phone: str, text: str, name: str = None):
         """
-        Processa uma mensagem recebida
+        Processa uma mensagem recebida (via Z-API direto)
 
         Args:
             phone: Telefone do cliente
@@ -125,17 +282,13 @@ class MessageProcessor:
                 self.db.commit()
                 logger.info(f"📊 Stage avançado: {old_stage} → {new_stage}")
                 
-                # 🆕 MOVER CARD NA PIPELINE DO DATACRAZY AUTOMATICAMENTE
+                # 🆕 ADICIONAR NOTA DE MUDANÇA DE ESTÁGIO
                 try:
-                    self.crm.move_lead_in_pipeline(conversation.lead_id, new_stage)
-                    logger.info(f"✅ Card movido na pipeline: {new_stage}")
-                    
-                    # 🆕 ADICIONAR NOTA DE MUDANÇA DE ESTÁGIO
                     self._add_stage_change_note(conversation.lead_id, old_stage, new_stage, llm_lead_data)
                 except Exception as e:
                     logger.warning(f"⚠️  Erro ao mover card na pipeline: {e}")
 
-            # 15. Envia resposta via WhatsApp
+            # 15. Envia resposta via WhatsApp (Z-API)
             self.zapi.send_text(phone, response)
             logger.info(f"✅ Resposta enviada para {phone}")
 
