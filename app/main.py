@@ -184,7 +184,7 @@ async def webhook_datacrazy(request: Request, background_tasks: BackgroundTasks)
     try:
         payload = await request.json()
         
-        logger.info(f"📥 Webhook DataCrazy recebido")
+        logger.info(f"📥 Webhook DataCrazy recebido: {payload}")
         
         # Extrair dados do payload DataCrazy
         phone = payload.get('phone')

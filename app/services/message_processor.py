@@ -146,19 +146,17 @@ class MessageProcessor:
                 except Exception as e:
                     logger.warning(f"⚠️  Erro ao adicionar nota de estágio: {e}")
 
-            # 15. 🆕 ENVIA RESPOSTA VIA DATACRAZY (para aparecer nas conversas!)
+            # 15. ENVIA VIA Z-API (sempre) + registra no DataCrazy
+            self.zapi.send_text(phone, response)
+            logger.info(f"✅ Resposta enviada via Z-API para {phone}")
+            
+            # Registra no DataCrazy para aparecer na conversa
             if datacrazy_conversation_id:
-                success = self.crm.send_message_via_crm(datacrazy_conversation_id, response)
-                if success:
-                    logger.info(f"✅ Resposta enviada via DataCrazy para {phone}")
-                else:
-                    # Fallback para Z-API se falhar
-                    logger.warning("⚠️  Falha DataCrazy, usando Z-API como fallback")
-                    self.zapi.send_text(phone, response)
-            else:
-                # Sem conversation_id, usa Z-API direto
-                logger.warning("⚠️  Sem datacrazy_conversation_id, usando Z-API")
-                self.zapi.send_text(phone, response)
+                try:
+                    self.crm.send_message_via_crm(datacrazy_conversation_id, response)
+                    logger.info(f"📝 Mensagem registrada no DataCrazy (conversa {datacrazy_conversation_id})")
+                except Exception as e:
+                    logger.warning(f"⚠️  Falha ao registrar no DataCrazy: {e}")
 
             # 16. Sincroniza com CRM - Nota da conversa
             try:
